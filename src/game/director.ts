@@ -252,11 +252,14 @@ export class Director {
     }
 
     // strip / lattice. Husk guard (amendment 9): mine the PARTIAL dose down
-    // to EXACTLY the floor rather than refusing the whole dose — this leaves
-    // no stranded mass and makes a single big-dt advance reach the same
-    // floor as many small-dt advances (big/small-dt equivalence, helps
-    // Task 10 bots). Only when there is zero headroom left do we refuse and
-    // auto-stop the mode (extractionFloor fires once per (re)selection).
+    // toward the floor rather than refusing the whole dose — this leaves no
+    // stranded mass and keeps accounting dt-invariant. Note extract() clamps
+    // each call to mass/2, so a body converges to its floor over REPEATED
+    // advances (mass halves until < 2·floor, then lands exactly on floor); a
+    // single big-dt advance does not exhaust it in one step. Task 10 bots must
+    // loop until `mode` clears, not assume one tick drains a body. Only when
+    // there is zero headroom left do we refuse and auto-stop the mode
+    // (extractionFloor fires once per (re)selection).
     const floor = EXTRACTION_FLOOR * body.m0
     const dm = Math.min(RATE[this.mode as 'strip' | 'lattice'] * dt, body.mass - floor)
     if (dm <= 0) {
