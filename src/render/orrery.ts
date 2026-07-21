@@ -57,6 +57,9 @@ export class Orrery {
   group = new THREE.Group()
   private meshes = new Map<string, THREE.Object3D>()
   private trails = new Map<string, Trail>()
+  // Static orbit skeleton: a faint full circle at each body's rNom, re-centred
+  // each frame on its parent's CURRENT position (planets → sun, moons → planet).
+  private guides = new Map<string, { loop: THREE.LineLoop; parentName: string }>()
   private harmonyRing: THREE.Mesh
   private loader = new THREE.TextureLoader()
 
@@ -134,6 +137,32 @@ export class Orrery {
     this.group.add(mesh)
     this.meshes.set(b.name, mesh)
 
+    if ((b.kind === 'planet' || b.kind === 'moon') && b.parentName && b.rNom > 0) {
+      // Static guide-ring: a faint steel-blue circle of radius rNom in the xy
+      // plane, drawn once and re-centred on the parent each frame. This shows
+      // the whole orbital STRUCTURE immediately (even at t=0, no motion), so
+      // the system reads as an orrery rather than a cluster of dots.
+      const segs = 160
+      const gpts: THREE.Vector3[] = []
+      for (let i = 0; i < segs; i++) {
+        const a = (i / segs) * Math.PI * 2
+        gpts.push(new THREE.Vector3(Math.cos(a) * b.rNom, Math.sin(a) * b.rNom, 0))
+      }
+      const loop = new THREE.LineLoop(
+        new THREE.BufferGeometry().setFromPoints(gpts),
+        new THREE.LineBasicMaterial({
+          color: 0x5a7ba8,
+          transparent: true,
+          opacity: 0.16,
+          blending: THREE.AdditiveBlending,
+          depthWrite: false,
+        }),
+      )
+      loop.frustumCulled = false
+      this.group.add(loop)
+      this.guides.set(b.name, { loop, parentName: b.parentName })
+    }
+
     if (b.kind === 'planet' || b.kind === 'moon') {
       // Additive blending so the trail reads as a luminous stability-colored
       // arc that catches the renderer's bloom, not a flat hairline.
@@ -195,6 +224,14 @@ export class Orrery {
       mesh.position.set(b.pos.x * POS_SCALE, b.pos.y * POS_SCALE, 0)
       if (b.kind === 'planet' || b.kind === 'moon' || b.kind === 'star') {
         mesh.rotation.z = time * 0.1
+      }
+
+      // Re-centre this body's guide-ring on its parent's current position
+      // (moons track their planet as it orbits; planets track the sun).
+      const guide = this.guides.get(b.name)
+      if (guide) {
+        const parent = this.sim.bodies.find((p) => p.name === guide.parentName)
+        if (parent) guide.loop.position.set(parent.pos.x * POS_SCALE, parent.pos.y * POS_SCALE, 0)
       }
 
       const trail = this.trails.get(b.name)

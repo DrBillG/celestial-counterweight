@@ -16,7 +16,10 @@ export class Renderer {
     container.appendChild(this.renderer.domElement)
 
     this.camera = new THREE.PerspectiveCamera(55, innerWidth / innerHeight, 0.1, 5000)
-    this.camera.position.set(0, -260, 200) // tilted god view of the xy orbital plane
+    // Tilted god view of the xy orbital plane, pulled in so the populated inner
+    // system (mercury..saturn) fills the frame while neptune + the Harmony Ring
+    // sit near the edges.
+    this.camera.position.set(0, -190, 150)
     this.camera.lookAt(0, 0, 0)
 
     this.composer = new EffectComposer(this.renderer)
