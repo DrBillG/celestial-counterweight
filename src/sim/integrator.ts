@@ -4,6 +4,14 @@ import { v, type Vec } from './vec'
 
 // Pairwise Newtonian gravity. extraAccel lets sim.ts inject the runaway and
 // station-keeping terms (Tasks 7/8) without the integrator knowing about them.
+//
+// Contract: the returned acceleration must depend only on position/game state
+// (b.pos, other bodies, elapsed time, stability state, etc.) — NEVER on
+// b.vel. Velocity-dependent forces are non-conservative and break the
+// symplectic (KDK) guarantee: step() calls extra() once against pre-drift
+// velocities (a1) and once against post-drift velocities (a2), so a
+// velocity-dependent term would see two inconsistent velocity values within
+// a single step, corrupting the leapfrog integration this game depends on.
 export type ExtraAccel = (b: Body, i: number) => Vec
 
 export function accelerations(bodies: Body[], extra?: ExtraAccel): Vec[] {
