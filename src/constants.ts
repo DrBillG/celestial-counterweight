@@ -45,7 +45,19 @@ export const EXTRACTION_FLOOR = 0.05   // TUNE
 // parent within one epicycle) and authoritative at opposition (where the
 // runaway otherwise outpulls the assist and wins). ASSIST_K is therefore
 // set high for far-phase authority and ASSIST_MAX bounds the near phase.
-export const ASSIST_K = 1500           // TUNE: per-unit-fab-mass gain scale (retuned for real ≤0.05 fab masses)
+// Task 10 raise 1500 -> 9000: the Task 8 rescue proof used deliberately
+// heavy (0.03–0.05) fabs, but a REAL counterweight is built from ONE mine-
+// to-amber's cargo (≈0.003 for titan) — 10–16× lighter. At ASSIST_K=1500 a
+// cargo-sized counterweight was too weak to hold its body (titan decayed
+// amber→critical over ~200 tu despite a live, in-range fab, measured by the
+// scenario bots), so the amendment-13 winning cadence physically failed.
+// 9000 lets a ≈0.003 fab pin titan back to green and hold it. This is a
+// PD-control gain applied ONLY to the assisted body and gated by that body's
+// own envelope, so it cannot perturb siblings; the Task 8 grid rescue,
+// tick-partition, healing, and no-false-alarm proofs all stay green (near
+// phase is unchanged — still ASSIST_MAX-capped; only far-phase authority on
+// light fabs increased).
+export const ASSIST_K = 9000           // TUNE: per-unit-fab-mass gain scale (retuned for real ≤0.05 fab masses)
 export const ASSIST_MAX = 0.15         // TUNE: saturation of the total PD gain K
 export const ASSIST_RANGE = 40
 // Direct gain contribution while the ship is stationed (setShipAssist).
@@ -78,11 +90,21 @@ export const FAB_MIN_SEPARATION = 8    // TUNE
 // phobos is unrescuable (mars is a fab-exclusion zone, amendment 12a — no
 // counterweight can hold it). Honestly-accessible pool = titan 0.0219 +
 // moon 0.0114 + jupiter trio 0.0014 ≈ 0.035 usable AFTER the extraction
-// floors. 0.015 requires ~45% harvest of the safe pool: skilled-but-
-// achievable with counterweight rescue, losable if greedy.
-// PROVISIONAL — Task 10 must measure the real achievable-under-best-play
-// pool and set the final value to ~55–65% of it, within [0.010, 0.025].
-export const SPHERE_MASS_REQUIRED = 0.015 // TUNE: total delivered mass to win
+// floors. Of that, the jupiter trio (0.0014) proved to be its own mini-trap:
+// the near-massless resonant moons husk-kick (amendment 9) into a jupiter
+// collision when drained toward their floor, so the honestly-DELIVERABLE
+// pool is titan + moon ≈ 0.033 held by counterweights.
+//
+// MEASURED (Task 10 scenario bots, tests/scenario.test.ts): the efficient
+// mine-to-amber → counterweight bot's achievable delivered pool under
+// sustained best play is ≈0.021 (titan-led, counterweight-held; the last
+// harvest rounds hit diminishing mass-per-round as orbits deepen, and
+// pushing all the way to the floor eventually loses a body). Final win
+// target = 0.012, ≈57% of 0.021 — inside the amendment-13a [0.010, 0.025]
+// range and firmly in the skilled-but-comfortable band: the reference bot
+// wins in ≈7 rounds with ~75% of the run to spare, while the greedy strip
+// bot loses long before banking a third of it.
+export const SPHERE_MASS_REQUIRED = 0.012 // TUNE: total delivered mass to win
 
 // Director (Task 9)
 export const SIM_RATE = 1              // TUNE: sim tu advanced per real-time unit passed to Director.advance
