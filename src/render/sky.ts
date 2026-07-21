@@ -258,4 +258,20 @@ export class Sky {
       m.color.setRGB(1 + cold * 0.3, 1 - cold * 0.25, 1 - cold * 0.15)
     }
   }
+
+  // Free GPU buffers/textures so the sky can be rebuilt (e.g. Task 16 lowers
+  // quality) without leaking. Star layers include the Milky Way band; nebulae
+  // carry canvas-texture maps that must be released too.
+  dispose() {
+    for (const l of this.layers) {
+      l.geometry.dispose()
+      ;(l.material as THREE.Material).dispose()
+    }
+    for (const n of this.nebulae) {
+      const m = n.material as THREE.SpriteMaterial
+      m.map?.dispose()
+      m.dispose()
+    }
+    this.group.clear()
+  }
 }

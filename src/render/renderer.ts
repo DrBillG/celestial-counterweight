@@ -36,6 +36,17 @@ export class Renderer {
   render() {
     this.composer.render()
   }
+
+  // Free GPU resources so the sky/scene can be torn down and rebuilt
+  // (e.g. Task 16 quality changes) without leaking buffers or contexts.
+  dispose() {
+    for (const pass of this.composer.passes) {
+      ;(pass as { dispose?: () => void }).dispose?.()
+    }
+    this.composer.renderTarget1.dispose()
+    this.composer.renderTarget2.dispose()
+    this.renderer.dispose()
+  }
 }
 
 export function webglAvailable(): boolean {
