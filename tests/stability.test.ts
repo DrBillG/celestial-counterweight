@@ -40,7 +40,7 @@ describe('stability (envelope-based)', () => {
     // causality. Scaling doses down ~10x and reading out at t=40 (before
     // any dose saturates the floor) recovers a clean graded decline:
     // measured heldScore('titan') at t=40 for doses [0, 0.0001, 0.0003,
-    // 0.0006] = [100, 91.41, 50.32, 0] (deterministic, see prompt report).
+    // 0.0006] = [100, 91.41, 50.32, 0] (deterministic).
     const doses = [0, 0.0001, 0.0003, 0.0006]
     const scores = doses.map(dose => {
       const bodies = buildSystem()
@@ -87,5 +87,45 @@ describe('stability (envelope-based)', () => {
     const untouched = scoreOf(findBody(control, 'phobos')!, control, envelope)
     expect(drained).toBeLessThan(untouched - 5)
     expect(untouched).toBe(100)
+  })
+
+  it('track() registers a new body without disturbing already-tracked held/band state', () => {
+    const bodies = buildSystem()
+    const titan = findBody(bodies, 'titan')!
+    const saturn = findBody(bodies, 'saturn')!
+    const phobos = findBody(bodies, 'phobos')!
+    // Construct the tracker WITHOUT phobos — simulates a body that isn't
+    // present/tracked yet (the mid-run-addition scenario Task 7 hits when
+    // spawning fabs: the tracker predates the new body).
+    const initial = bodies.filter(b => b.name !== 'phobos')
+    const tracker = new StabilityTracker(initial, envelope)
+    extract(titan, 'strip', 0.0006, saturn.vel)
+    run(bodies, 40, tracker)
+    expect(tracker.heldBand('titan')).toBe('critical')
+    const titanHeldBefore = tracker.heldScore('titan')
+    expect(() => tracker.heldScore('phobos')).toThrow()
+
+    tracker.track(phobos)
+
+    expect(tracker.heldBand('phobos')).toBe('green')
+    expect(tracker.heldScore('phobos')).toBe(100)
+    // titan's already-accumulated held/band state must be untouched.
+    expect(tracker.heldBand('titan')).toBe('critical')
+    expect(tracker.heldScore('titan')).toBe(titanHeldBefore)
+  })
+
+  it('heldScore/heldBand throw for an unknown body name (no silent fallback)', () => {
+    const bodies = buildSystem()
+    const tracker = new StabilityTracker(bodies, envelope)
+    expect(() => tracker.heldScore('not-a-real-body')).toThrow()
+    expect(() => tracker.heldBand('not-a-real-body')).toThrow()
+  })
+
+  it('scoreOf throws when the envelope has no entry for the body (no silent ?? 0)', () => {
+    const bodies = buildSystem()
+    const titan = findBody(bodies, 'titan')!
+    const strippedEnvelope = { ...envelope }
+    delete strippedEnvelope['titan']
+    expect(() => scoreOf(titan, bodies, strippedEnvelope)).toThrow()
   })
 })

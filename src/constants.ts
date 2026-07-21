@@ -17,6 +17,7 @@ export const BAND_AMBER = 85
 export const BAND_RED = 60
 export const BAND_CRITICAL = 30
 export const ENV_MARGIN = 0.01  // absolute slack over the pristine envelope; mining elsewhere shifts ambient forcing slightly
+export const HELD_RECOVERY_PER_TU = 0.25  // TUNE: held-score recovery rate; genuine healing arrives with Task 8's re-circularization
 export const RUNAWAY_ACCEL = 0.004     // TUNE: designed instability past critical
 export const EJECT_RADIUS = 600        // beyond this from sun = ejected (lose event)
 

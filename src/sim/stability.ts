@@ -12,10 +12,20 @@ import type { Body } from './body'
 import { dist } from './vec'
 import { buildSystem } from './data'
 import { stepHierarchical } from './integrator'
-import { DT, RUN_DURATION, DEV_GAIN, ENV_MARGIN, BAND_AMBER, BAND_RED, BAND_CRITICAL } from '../constants'
+import { DT, RUN_DURATION, DEV_GAIN, ENV_MARGIN, BAND_AMBER, BAND_RED, BAND_CRITICAL, HELD_RECOVERY_PER_TU } from '../constants'
 
 export type Band = 'green' | 'amber' | 'red' | 'critical'
 
+// Fires on every step where a tracked body's held band changes. Under
+// physical dynamics (one sim step's worth of deviation change) a large
+// jump still emits one event per crossed band boundary, since held score
+// only moves incrementally relative to the previous step. But this is NOT
+// a structural guarantee — a caller that reseeds/mutates held state in a
+// non-physical way (e.g. re-running track() at a very different score, or
+// a future change that lets held score jump non-incrementally) can merge
+// multiple boundary crossings into a single event. Consumers MUST key off
+// `to` (treat `from -> to` as a span that may skip intermediate bands),
+// not assume every band is visited via its own event.
 export interface BandEvent {
   body: string
   from: Band
@@ -65,8 +75,11 @@ export function computeBaselineEnvelope(): Record<string, number> {
 // clamped to [0, 100]. A body only loses points once its deviation exceeds
 // its OWN pristine envelope plus a slack margin.
 export function scoreOf(body: Body, bodies: Body[], envelope: Record<string, number>): number {
+  if (!(body.name in envelope)) {
+    throw new Error(`scoreOf: no baseline envelope entry for body '${body.name}' — wiring bug (missing computeBaselineEnvelope() entry, or a body added after the envelope was computed)`)
+  }
   const dev = deviationOf(body, bodies)
-  const env = envelope[body.name] ?? 0
+  const env = envelope[body.name]
   const excess = Math.max(0, dev - env - ENV_MARGIN)
   const score = 100 - DEV_GAIN * excess
   return Math.max(0, Math.min(100, score))
@@ -92,16 +105,18 @@ export function harmony(bodies: Body[], envelope: Record<string, number>): numbe
 }
 
 // Tracks a "held" score per body across sim steps: instant worsening,
-// slow recovery (+0.002/step cap) — prevents band flapping as oscillating
-// orbits swing back through nominal. Emits a BandEvent only on the steps
-// where the held band actually crosses.
+// slow recovery (capped at HELD_RECOVERY_PER_TU per tu) — prevents band
+// flapping as oscillating orbits swing back through nominal. Emits a
+// BandEvent only on the steps where the held band actually crosses.
 export class StabilityTracker {
   private envelope: Record<string, number>
+  private bodies: Body[]
   private held = new Map<string, number>()
   private bands = new Map<string, Band>()
 
   constructor(bodies: Body[], envelope: Record<string, number>) {
     this.envelope = envelope
+    this.bodies = bodies
     for (const b of bodies) {
       if (!tracked(b)) continue
       const score = scoreOf(b, bodies, envelope)
@@ -111,12 +126,13 @@ export class StabilityTracker {
   }
 
   update(bodies: Body[]): BandEvent[] {
+    this.bodies = bodies
     const events: BandEvent[] = []
     for (const b of bodies) {
       const prevHeld = this.held.get(b.name)
       if (prevHeld === undefined) continue
       const raw = scoreOf(b, bodies, this.envelope)
-      const heldScore = Math.min(raw, prevHeld + 0.002)
+      const heldScore = Math.min(raw, prevHeld + HELD_RECOVERY_PER_TU * DT)
       const prevBand = this.bands.get(b.name)!
       const newBand = bandOf(heldScore)
       if (newBand !== prevBand) {
@@ -128,11 +144,34 @@ export class StabilityTracker {
     return events
   }
 
+  // Registers a newly-added body (e.g. a fab spawned mid-run in Task 7)
+  // by seeding ONLY that body's held score/band from its current raw
+  // score — every other already-tracked body's held/band state is left
+  // untouched. Task 7 MUST use this instead of constructing a fresh
+  // StabilityTracker when the roster changes mid-run: a fresh tracker
+  // reseeds EVERY body's held score from its CURRENT raw score, discarding
+  // the accumulated instant-worsen/slow-recover history — probed: a body
+  // whose held state is 'critical' (deep in a slow recovery) reads back as
+  // 'amber' under a fresh tracker the instant its raw score happens to
+  // have recovered, even though the real (held) alarm state is still
+  // critical. No-op for non-orbital kinds (ship/fab) since those are never
+  // score-tracked (see `tracked()`).
+  track(body: Body): void {
+    if (!tracked(body)) return
+    const score = scoreOf(body, this.bodies, this.envelope)
+    this.held.set(body.name, score)
+    this.bands.set(body.name, bandOf(score))
+  }
+
   heldScore(name: string): number {
-    return this.held.get(name) ?? 100
+    const v = this.held.get(name)
+    if (v === undefined) throw new Error(`StabilityTracker.heldScore: '${name}' is not tracked (never constructed with it, nor track()ed)`)
+    return v
   }
 
   heldBand(name: string): Band {
-    return this.bands.get(name) ?? 'green'
+    const v = this.bands.get(name)
+    if (v === undefined) throw new Error(`StabilityTracker.heldBand: '${name}' is not tracked (never constructed with it, nor track()ed)`)
+    return v
   }
 }
