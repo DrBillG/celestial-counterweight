@@ -21,7 +21,9 @@ export class Renderer {
 
     this.composer = new EffectComposer(this.renderer)
     this.composer.addPass(new RenderPass(this.scene, this.camera))
-    this.composer.addPass(new UnrealBloomPass(new THREE.Vector2(innerWidth, innerHeight), 0.9, 0.6, 0.1))
+    // Lower threshold ~0 so even mid stars catch bloom; higher strength so the
+    // brightest "hero" stars visibly burn with halos.
+    this.composer.addPass(new UnrealBloomPass(new THREE.Vector2(innerWidth, innerHeight), 1.1, 0.6, 0.0))
 
     addEventListener('resize', () => {
       this.camera.aspect = innerWidth / innerHeight
