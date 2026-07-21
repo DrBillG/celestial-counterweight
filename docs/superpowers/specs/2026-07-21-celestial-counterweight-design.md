@@ -86,9 +86,23 @@ reinforcing intuition without UI text.
 
 ## 5. Physics Design
 
-One Newtonian N-body simulation covers sun, planets, moons, ship, fabs, and sphere
-segments. Fixed-timestep symplectic integrator (stable long-horizon orbits). The
-Temporal Compressorator scales sim-time so consequences unfold in minutes.
+> **Amendment (2026-07-21, implementation-verified):** the sim is a **hierarchical
+> two-layer Newtonian simulation** (KSP-style), not a single fully-coupled N-body.
+> A heliocentric layer integrates sun/planets/ship/fabs (planets carry their moons'
+> masses); each moon system integrates in its parent's frame under the parent's
+> *current* mass plus sibling gravity. Reason: at game-scaled masses, full coupling
+> is chaotically unstable on run timescales (measured moon ejections at >0.4 Hill
+> radii; mean-motion-resonance pumping of planet orbits). All player-facing physics
+> promises survive: mining impulses shove moons, a lightened parent loosens its
+> grip, counterweights act via the assist force. The roster is resonance-detuned
+> and verified quiet (running-max deviation < 2% for every body over a full run,
+> enforced by test). Stability scoring (§below) is calibrated per-body against the
+> deterministic pristine baseline envelope, scoring only *exceedance*.
+
+One Newtonian simulation architecture (two layers, as amended above) covers sun,
+planets, moons, ship, fabs, and sphere segments. Fixed-timestep symplectic
+integrator (stable long-horizon orbits). The Temporal Compressorator scales
+sim-time so consequences unfold in minutes.
 
 **Mining pushes (the core mechanic).** Extracted material leaves the body as ejecta
 carrying momentum; net unbalanced ejecta = real impulse on the body.

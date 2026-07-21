@@ -12,7 +12,20 @@
 
 **One deliberate spec refinement (read before Task 8):** Passive gravity from a parked fab cannot reliably *restore* a perturbed orbit — real orbital mechanics doesn't heal. The counterweight lever is therefore implemented as **gravitational-tether station-keeping**: a fab near a wobbling body applies a restoring acceleration toward the body's nominal orbit, with magnitude `ASSIST_K * fabMass / d²` — the same inverse-square mass coupling as gravity, so the *cause* (big mass placed close) stays physical and intuitive. This is the one gameplay-designed force in the sim, and it is documented and tested explicitly.
 
-**Physics units (used everywhere):** Game-scaled units, not SI. `G = 1`, sun mass `1000`, planet orbit radii 40–320 units, one time-unit (tu) ≈ 1 real second at Temporal Compressorator rate ×1. Circular orbit speed is `v = sqrt(G·M/r)`; the system data is *constructed* to start in perfect circular equilibrium, which is what makes the null test (Task 4) meaningful.
+**Physics units (used everywhere):** Game-scaled units, not SI. `G = 1`, sun mass `1000`, planet orbit radii 38–344 units, one time-unit (tu) ≈ 1 real second at Temporal Compressorator rate ×1. Circular orbit speed uses the softened-potential helper `circularSpeed()`; the system data is *constructed* to start in circular equilibrium, which is what makes the null test (Task 4) meaningful.
+
+---
+
+## ⚠ AMENDMENTS LOG (binding — supersedes task text below where they conflict)
+
+Recorded after Task 4 shipped (commits 412fc50, feb76c0, 5e7968a). Every later task must honor these:
+
+1. **Hierarchical sim (Tasks 4–10).** The sim is two-layer (heliocentric layer + per-parent moon frames via `stepHierarchical`); `step()` remains only for the heliocentric sub-array and old tests. Task 7's `Sim.tick` must call `stepHierarchical`, never `step`. Moons are gravitationally invisible to ship/fabs — cross-layer influence happens ONLY via the `extra` accel hook.
+2. **ExtraAccel contract (Tasks 7–8).** Extra accelerations must not read any body's `vel` OR `mass` (helio masses are temporarily boosted during layer 1; staleness windows documented in integrator.ts). Position/game-state only.
+3. **Roster (Task 4 final).** Planets: mercury 38/0.03, venus 52/0.4, earth 75/0.5, mars 104/0.11 (minable), jupiter 175/1.5, saturn 255/1.0, uranus 292/0.45, neptune 344/0.5. Moons: moon 6/0.012, phobos 4/0.004, io 8/0.0005, europa 12/0.0005, ganymede 20.5/0.0005, titan 13/0.023 (all minable). The Jupiter trio is near-massless (resonance constraints) — treat as trophy targets in Task 10 economy tuning; total minable pool ≈ 0.148.
+4. **Stability scoring is envelope-based (Task 6).** The plan's raw `score = 100 − DEV_GAIN·dev` formula is DEAD — ambient forced oscillations reach ~2% (> amber). Instead: at Sim construction, run the pristine deterministic null sim once (~0.3 s) and record each body's scalar max deviation envelope B(body); score = 100 − DEV_GAIN·max(0, dev − B(body) − MARGIN) with an absolute MARGIN (~1%) so untouched bodies never false-amber when masses shift elsewhere. Envelope is computed, never hard-coded. Monotonicity/threshold tests adapt accordingly.
+5. **Null-test bar.** `tests/system.test.ts` asserts per-body RUNNING-MAX deviation < 0.02 over RUN_DURATION, plus a bitwise determinism pin. Any roster/DT/RUN_DURATION change must re-run the extended (2×) probe — neptune crosses 2% at t≈1839; guard comments sit beside RUN_DURATION.
+6. **Catastrophe detection (Task 7).** Moon ejection must be detected RELATIVE to parent (e.g. rel distance > 3× rNom), not via heliocentric EJECT_RADIUS (which stays for planets/heliocentric bodies).
 
 ---
 
