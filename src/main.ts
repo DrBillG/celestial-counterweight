@@ -12,11 +12,18 @@ const app = document.getElementById('app')!
 const hud = document.getElementById('hud')!
 if (!webglAvailable()) {
   app.innerHTML =
-    '<div style="color:#cfe3ff;font-family:monospace;padding:40vh 20px;text-align:center">Celestial Counterweight needs WebGL. Please try a modern desktop browser.</div>'
+    '<div style="position:fixed;inset:0;display:flex;flex-direction:column;gap:12px;align-items:center;justify-content:center;' +
+    'color:#cfe3ff;font-family:ui-monospace,monospace;text-align:center;padding:0 24px;line-height:1.6">' +
+    '<div style="font-size:20px;letter-spacing:2px;color:#ffd27a">CELESTIAL COUNTERWEIGHT</div>' +
+    '<div style="max-width:440px;color:#9fb6d6">This game needs WebGL, which your browser has disabled or does not support. ' +
+    'Please try a current desktop browser (Chrome, Firefox, Edge, or Safari) with hardware acceleration enabled.</div>' +
+    '</div>'
 } else {
   const r = new Renderer(app)
   const director = new Director()
-  const sky = new Sky()
+  // `let` (not const): the perf autoscaler below rebuilds the sky at a lower
+  // quality tier if frames stay slow.
+  let sky = new Sky()
   const orrery = new Orrery(director.sim)
   r.scene.add(sky.group, orrery.group)
 
@@ -49,6 +56,11 @@ if (!webglAvailable()) {
       case 'to-fab': director.selectTarget('fab'); director.launch(); break
       case 'place-suggested': director.placeSegment('suggested'); break
       case 'place-hasty': director.placeSegment('hasty'); break
+      // Restart is a full page reload, NOT a soft in-place reset. This is
+      // deliberate (amendment 15): the Sim keeps catastrophe/fabLost bodies in
+      // sim.bodies and the Orrery has no dispose(), so a soft reset would leak
+      // dead-body meshes and stale GPU buffers. reload() rebuilds the whole
+      // scene cleanly and sidesteps both for v1.
       case 'restart': location.reload(); break
     }
   }
@@ -89,6 +101,17 @@ if (!webglAvailable()) {
     ;(window as unknown as { __cc: unknown }).__cc = { director, cameraDirector, audio }
   }
 
+  // PERFORMANCE AUTOSCALE (Task 16). A rolling-average frame time; if it stays
+  // above ~22ms (≈45fps) for ~5 consecutive seconds we step the sky DOWN one
+  // quality tier (3→2→1), disposing the old sky so we don't leak GPU buffers.
+  // At the lowest tier, if it's STILL slow, bloom is dropped as a last resort.
+  // Downscale-only (never back up) so it can't oscillate; once at tier 1 with
+  // bloom reduced the whole check goes inert.
+  let frameAvg = 16
+  let skyQuality: 1 | 2 | 3 = 3
+  let slowSince = 0
+  let bloomReduced = false
+
   let last = performance.now()
   const frame = (t: number) => {
     const dt = Math.min((t - last) / 1000, 0.1)
@@ -112,6 +135,30 @@ if (!webglAvailable()) {
     sky.update(t / 1000, director.sim.harmony())
     orrery.update(t / 1000)
     r.render()
+
+    // Autoscale check (see block above the loop). EMA of the per-frame compute
+    // time; sustained-slow trips at most one downscale step per 5s window.
+    frameAvg = frameAvg * 0.95 + (performance.now() - t) * 0.05
+    if (frameAvg > 22 && (skyQuality > 1 || !bloomReduced)) {
+      if (!slowSince) slowSince = t
+      else if (t - slowSince > 5000) {
+        if (skyQuality > 1) {
+          skyQuality = (skyQuality - 1) as 1 | 2
+          r.scene.remove(sky.group)
+          sky.dispose() // free the old sky's GPU buffers/textures before rebuild
+          sky = new Sky(skyQuality)
+          r.scene.add(sky.group)
+          console.warn(`[perf] frame avg ${frameAvg.toFixed(1)}ms — sky quality → ${skyQuality}`)
+        } else if (!bloomReduced) {
+          bloomReduced = true
+          r.reduceBloom()
+          console.warn(`[perf] frame avg ${frameAvg.toFixed(1)}ms — bloom reduced (min sky tier)`)
+        }
+        slowSince = 0 // start a fresh 5s window before the next possible step
+      }
+    } else {
+      slowSince = 0 // recovered (or nothing left to do): reset the timer
+    }
   }
   const loop = (t: number) => {
     frame(t)

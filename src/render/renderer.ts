@@ -8,6 +8,7 @@ export class Renderer {
   scene = new THREE.Scene()
   camera: THREE.PerspectiveCamera
   composer: EffectComposer
+  private bloom: UnrealBloomPass
 
   constructor(container: HTMLElement) {
     this.renderer = new THREE.WebGLRenderer({ antialias: true })
@@ -30,7 +31,8 @@ export class Renderer {
     // blows the close-up bridge view (Task 13) into featureless white blobs;
     // gating at 0.32 keeps Saturn's bands and Titan's ice legible up close
     // while the sky's hero stars (near layer, brightness 1.3) still clear it.
-    this.composer.addPass(new UnrealBloomPass(new THREE.Vector2(innerWidth, innerHeight), 1.1, 0.6, 0.32))
+    this.bloom = new UnrealBloomPass(new THREE.Vector2(innerWidth, innerHeight), 1.1, 0.6, 0.32)
+    this.composer.addPass(this.bloom)
 
     addEventListener('resize', () => {
       this.camera.aspect = innerWidth / innerHeight
@@ -42,6 +44,13 @@ export class Renderer {
 
   render() {
     this.composer.render()
+  }
+
+  // Perf autoscale (Task 16) last resort: at the lowest sky tier, if frames are
+  // still slow, drop bloom to a near-flat strength (kept nonzero so hero stars
+  // and the sun don't go completely dull). One-way, like the sky downscale.
+  reduceBloom(): void {
+    this.bloom.strength = 0.15
   }
 
   // Free GPU resources so the sky/scene can be torn down and rebuilt
