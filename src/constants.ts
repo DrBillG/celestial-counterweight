@@ -6,6 +6,10 @@ export const SUN_MASS = 1000
 export const DT = 0.02                  // sim timestep (tu)
 export const SOFTENING = 0.5           // gravity softening to avoid singularities
 export const RUN_DURATION = 1800       // tu of sim time in one run (~30 min at rate 1)
+// RUN_DURATION guard: the roster's equilibrium (src/sim/data.ts) is
+// verified to hold the null-test band for 1x this value and probed to 2x
+// (neptune first crosses the band at t ~= 1839; all other bodies hold to
+// 2x). Re-run the extended null probe before raising this value.
 
 // Stability (Task 6/7)
 export const DEV_GAIN = 1200           // TUNE: deviation → score steepness

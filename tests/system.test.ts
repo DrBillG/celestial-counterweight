@@ -14,8 +14,9 @@ describe('solar system', () => {
   })
 
   // Bound is the coordinator-approved fallback band: best achievable
-  // running-max with reduced masses + detuned radii is 1.93% (jupiter,
-  // forced by saturn); see the roster notes in src/sim/data.ts. Task 6
+  // running-max with reduced masses + detuned radii is 1.98% (saturn,
+  // forced by jupiter + uranus); see the roster notes in src/sim/data.ts
+  // for actual resonance clearances and the verified-horizon scope. Task 6
   // scores against per-body baseline envelopes, not this band.
   it('null test: untouched system stays < 2% deviation at EVERY step of a full run', () => {
     const bodies = buildSystem()

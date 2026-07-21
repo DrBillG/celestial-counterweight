@@ -25,18 +25,25 @@ interface Spec {
 //    mutual forcing regardless of geometry.
 // 2. Radii/PERIODS detune resonances — phases cannot; a mean-motion
 //    resonance is set by the period ratio alone, so only radii move it.
-//    Radii below were picked by a deterministic resonance-clearance search
-//    (all coprime p:q, weighted by pair mass product and resonance order)
-//    then verified by full running-max sims. Adjacent period ratios:
-//      venus:mercury  (52/38)^1.5  = 1.601
-//      earth:venus    (75/52)^1.5  = 1.732
-//      mars:earth     (104/75)^1.5 = 1.633  (5:3 −2.1%; was exactly 3:2)
-//      jupiter:mars   (175/104)^1.5= 2.183  (9:4 −3.0%; was 0.8% off 7:3)
-//      saturn:jupiter (255/175)^1.5= 1.759  (5:3 +5.5%; was 3:2 +2.6%!)
-//      uranus:saturn  (315/255)^1.5= 1.373  (4:3 +3.0%; was 4:3 −0.4%)
-//      neptune:uranus (340/315)^1.5= 1.121  (was 0.7% off 7:6)
-//    Remaining near-coincidences are high-order (weak) resonances; every
-//    1st/2nd-order resonance between heavy pairs is cleared by >= 3%.
+//    Radii below come from a deterministic resonance-clearance search
+//    verified by full running-max sims. Resonance ORDER is |p − q|:
+//    first-order p:(p−1) resonances are the strong ones for close pairs
+//    (an earlier draft ranked by integer size and let a 9:8 through at
+//    0.3% clearance — uranus/neptune pumped to 10% soon after the run).
+//    Actual clearances (nearest FIRST-ORDER resonance unless noted):
+//      venus:mercury  (52/38)^1.5  = 1.601  (3:2 +6.7%)
+//      earth:venus    (75/52)^1.5  = 1.732  (2:1 −13.4%; 5:3 +3.9% o2)
+//      mars:earth     (104/75)^1.5 = 1.633  (3:2 +8.8%; 5:3 −2.1% o2)
+//      jupiter:mars   (175/104)^1.5= 2.183  (2:1 +9.1%; 9:4 −3.0% o5)
+//      saturn:jupiter (255/175)^1.5= 1.759  (2:1 −12.1%; 7:4 +0.5% o3)
+//      uranus:saturn  (292/255)^1.5= 1.225  (5:4 −2.0%, 6:5 +2.1%)
+//      neptune:uranus (344/292)^1.5= 1.279  (4:3 −4.1%, 5:4 +2.3%)
+//      neptune:saturn (344/255)^1.5= 1.567  (3:2 +4.5%; 8:5 −2.1% o3)
+//    The outer chain CANNOT clear every first-order resonance by >= 5%:
+//    two such gaps need a period-ratio span of 1.414^2 ~ 2.0 and the
+//    allowed radius ranges cap the saturn->neptune span at ~1.76. The
+//    uranus:saturn and neptune:uranus pairs (the two lightest) therefore
+//    sit at the local mid-gap maxima (~2%); heavy pairs are >= 4.5% clear.
 // 3. Phases only choose WHERE in the free/forced beat each body starts
 //    (legitimate sampling; they cannot change forcing amplitude). Offender-
 //    only nudges vs the searched base: mercury −0.4, mars +0.8, saturn
@@ -47,11 +54,19 @@ interface Spec {
 //    Their radii 8/12/20.5 keep period ratios 1.84/2.23, clear of 2:1 and
 //    3:2 (the plan's r=16 sat exactly on europa's 3:2 and pumped 6-11%).
 //
-// Verified running-max deviations (90k steps): worst body jupiter 1.93%;
-// all other planets <= 1.80%; single moons ~0%; trio <= 0.88%. Hence the
-// null test's fallback band of 2% (coordinator-approved; Task 6 scores
-// against per-body baseline envelopes recorded at Sim construction, not
-// against this band).
+// Verified running-max deviations at 1x RUN_DURATION (90k steps): worst
+// body saturn 1.98%; all others <= 1.90%; single moons ~0%; trio <= 0.88%.
+// Hence the null test's fallback band of 2% (coordinator-approved; Task 6
+// scores against per-body baseline envelopes recorded at Sim construction,
+// not against this band).
+//
+// HORIZON SCOPE: the equilibrium is verified to 1x RUN_DURATION (band
+// holds at every step) and probed to 2x. Over the extended 2x horizon all
+// bodies stay inside the band EXCEPT neptune, which first crosses 2% at
+// t ~= 1839 (2% past RUN_DURATION) and peaks at 3.4% by 2x — the residual
+// secular pumping of the sub-5% first-order clearances above. If
+// RUN_DURATION is ever raised, re-run the extended null probe and expect
+// to re-detune the outer chain.
 const SPECS: Spec[] = [
   { name: 'sun',     kind: 'star',   parent: null,      r: 0,    mass: SUN_MASS, radius: 10, phase: 0 },
   { name: 'mercury', kind: 'planet', parent: 'sun',     r: 38,   mass: 0.03, radius: 1.2, phase: 5.159330687797544 },
@@ -66,8 +81,8 @@ const SPECS: Spec[] = [
   { name: 'ganymede',kind: 'moon',   parent: 'jupiter', r: 20.5, mass: 0.0005, radius: 0.9, minable: true, phase: 5.0 },
   { name: 'saturn',  kind: 'planet', parent: 'sun',     r: 255,  mass: 1.0,  radius: 4.8, phase: 2.0169372158879835 },
   { name: 'titan',   kind: 'moon',   parent: 'saturn',  r: 13,   mass: 0.023, radius: 0.9, minable: true, phase: 1.7 },
-  { name: 'uranus',  kind: 'planet', parent: 'sun',     r: 315,  mass: 0.45, radius: 3.2, phase: 1.1342241661813397 },
-  { name: 'neptune', kind: 'planet', parent: 'sun',     r: 340,  mass: 0.5,  radius: 3.1, phase: 0.5877357689177376 },
+  { name: 'uranus',  kind: 'planet', parent: 'sun',     r: 292,  mass: 0.45, radius: 3.2, phase: 1.1342241661813397 },
+  { name: 'neptune', kind: 'planet', parent: 'sun',     r: 344,  mass: 0.5,  radius: 3.1, phase: 0.5877357689177376 },
 ]
 
 export function findBody(bodies: Body[], name: string): Body | undefined {
