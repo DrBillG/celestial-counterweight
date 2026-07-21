@@ -12,7 +12,7 @@ import {
 import { dist, norm, sub, v, type Vec } from './vec'
 import {
   G, DT, RUNAWAY_ACCEL, EJECT_RADIUS, ASSIST_K, ASSIST_MAX, ASSIST_RANGE, ENV_MARGIN,
-  SHIP_ASSIST, DAMP_RATIO,
+  SHIP_ASSIST, DAMP_RATIO, ASSIST_SNAPSHOT_TU, FAB_MASS_RATIO_MAX, FAB_MIN_SEPARATION,
 } from '../constants'
 
 export type SimEvent =
@@ -61,31 +61,71 @@ export class Sim {
 
   // PD-controller snapshots (amendment 11(b), same sanctioned pattern as
   // fabMasses): the damping term needs a deviation RATE, but the ExtraAccel
-  // contract forbids velocity reads. So once per tick() — OUTSIDE the
-  // integrator callback — we snapshot each tracked body's signed radial
-  // deviation s = (dist(body,parent) − rNom)/rNom and derive its
-  // finite-difference rate sDot = (s − sPrev)/elapsed, where `elapsed` is
-  // the SIM TIME actually advanced by the previous tick() call (steps·DT —
-  // robust to variable tick sizes). Edge cases: on the very first tick
-  // sDot = 0 (no history); a tick(0) call advances no time, so the next
-  // tick sees elapsed = 0 and keeps the previous sDot (positions are
-  // unchanged — the last measured rate is still the best estimate).
-  // Staleness (up to one tick interval) is fine: deviation dynamics evolve
-  // on epicyclic timescales (~hundreds of tu), far slower than game ticks.
+  // contract forbids velocity reads. So — OUTSIDE the integrator callback —
+  // we periodically snapshot each tracked body's signed radial deviation
+  // s = (dist(body,parent) − rNom)/rNom and derive its finite-difference
+  // rate sDot = (s − sPrev)/elapsed.
+  //
+  // Cadence (coordinator fix, Task 8 review): the snapshot pass re-runs
+  // every ASSIST_SNAPSHOT_TU of substeps INSIDE tick(), keyed to the
+  // ABSOLUTE substep count (stepCount), not to tick() call boundaries.
+  // Two reasons: (1) a sDot frozen across a whole large tick is a stale
+  // derivative at high gain — measured: tick(10)-frozen snapshots turned a
+  // clean rescue into an ejection (relDist 5021); (2) substep-count keying
+  // makes the trajectory EXACTLY independent of how callers partition
+  // their tick() calls (tick(0.1)×6000 ≡ tick(10)×60, bitwise — pinned by
+  // the tick-partition-invariance test in tests/rebalance.test.ts).
+  // Edge cases: at the very first snapshot sDot = 0 (no history); a
+  // tick(0) call runs zero substeps and touches nothing; `elapsed` is
+  // derived from substep counts (integer) × DT, so it is exact and
+  // identical for every partition of the same total time.
   private prevS = new Map<string, number>()
   private sDots = new Map<string, number>()
-  private simTime = 0
-  private lastSnapshotTime = 0
+  private stepCount = 0      // total substeps ever run (absolute time base)
+  private lastSnapStep = -1  // stepCount at the previous PD snapshot; -1 = never
+  // Fractional-substep remainder (coordinator fix #5): tick(tu) runs
+  // floor((remainder+tu)/DT) substeps and carries the rest forward, so
+  // 60×tick(0.016) advances 0.96 tu (48 substeps), not 1.2. Part of Sim
+  // state — determinism across identical call sequences is preserved.
+  private tuRemainder = 0
 
   // Ship-assist target (amendment 11(c)): while set, the named body's PD
   // gain K gains a direct SHIP_ASSIST contribution — the ship stationed at
   // a body actively station-keeps it. Task 9 sets this during Return Slag
   // stationing (the ship does the ORBITAL healing; the returned slag mass
   // does the budget/coupling healing) and clears it when the ship leaves.
+  //
+  // Design intent (coordinator, Task 8 review): ship-only assist on a
+  // CRITICAL body is an indefinite HOLD, not a recovery — SHIP_ASSIST
+  // alone pins the deviation against the runaway but a full rescue needs a
+  // counterweight fab's gain on top. That is the intentional "hold the
+  // moon while you build the fab" mechanic, not a bug.
   private shipAssistTarget: string | null = null
 
   setShipAssist(bodyName: string | null): void {
+    if (bodyName !== null && !findBody(this.bodies, bodyName)) {
+      throw new Error(`setShipAssist: '${bodyName}' is not a body in this sim`)
+    }
     this.shipAssistTarget = bodyName
+  }
+
+  // One PD snapshot pass — see the doc comment on prevS/sDots above.
+  private snapshotPD(): void {
+    const elapsed = this.lastSnapStep < 0 ? 0 : (this.stepCount - this.lastSnapStep) * DT
+    for (const b of this.bodies) {
+      if (!b.parentName || b.kind === 'ship' || b.kind === 'fab' || b.rNom === 0) continue
+      const parent = findBody(this.bodies, b.parentName)
+      if (!parent) continue
+      const s = (dist(b.pos, parent.pos) - b.rNom) / b.rNom
+      const sPrev = this.prevS.get(b.name)
+      if (sPrev !== undefined && elapsed > 0) {
+        this.sDots.set(b.name, (s - sPrev) / elapsed)
+      } else if (!this.sDots.has(b.name)) {
+        this.sDots.set(b.name, 0) // first snapshot: no rate history yet
+      }
+      this.prevS.set(b.name, s)
+    }
+    this.lastSnapStep = this.stepCount
   }
 
   harmony(): number {
@@ -123,14 +163,38 @@ export class Sim {
   // safe at real masses" actually true, and what Task 9's counterweight
   // stationing builds on.
   //
+  // PLACEMENT GUARDS (coordinator review, Task 8): returns null — placement
+  // REJECTED, no body created — when:
+  //  - the fab binds to a planet and fabMass/primary.mass exceeds
+  //    FAB_MASS_RATIO_MAX (measured on mars: a 0.01 fab false-ambers it,
+  //    a 0.05 fab ejects it — real gravity, no gate can prevent it); the
+  //    check is skipped for sun-bound placements (sun mass 1000);
+  //  - the position is within FAB_MIN_SEPARATION of any LIVE fab
+  //    (measured: two 0.05 fabs at ≤6 u mutually capture, collide, and
+  //    doom the rescue).
+  // Task 9's placement UI should treat null as "invalid spot, pick again".
+  //
+  // Permanence note (coordinator, Task 8 review): a stationed counterweight
+  // is PERMANENT infrastructure. The PD assist pins a rescued moon near its
+  // envelope; it does not rewrite the underlying orbit — remove the fab (or
+  // let it die) and the residual eccentric orbit re-expresses. Rescue ≠
+  // re-circularization; only returnSlag accretion genuinely heals the
+  // orbit itself.
+  //
   // Placed on the SAME bodies array the tracker already holds a reference
   // to — we must NOT construct a new StabilityTracker here (amendment 7:
   // that would discard every other body's held instant-worsen/slow-recover
   // alarm state). Fabs themselves are never score-tracked
   // (StabilityTracker.tracked() excludes kind 'fab'), so there is no
   // track() call to make for the fab itself either.
-  addFab(pos: Vec, mass: number): Body {
+  addFab(pos: Vec, mass: number): Body | null {
     const sun = findBody(this.bodies, 'sun')!
+
+    // Separation guard — against LIVE fabs only.
+    for (const f of this.bodies) {
+      if (f.kind !== 'fab' || this.dead.has(f.name)) continue
+      if (dist(pos, f.pos) < FAB_MIN_SEPARATION) return null
+    }
     const rSun = dist(pos, sun.pos)
     const sunRadial = norm(sub(pos, sun.pos))
     const vSun = circularSpeed(sun.mass, rSun)
@@ -152,6 +216,9 @@ export class Sim {
         primary = p
       }
     }
+
+    // Mass-ratio guard — planet-bound placements only (see doc comment).
+    if (primary !== sun && mass / primary.mass > FAB_MASS_RATIO_MAX) return null
 
     let vel: Vec
     let r: number
@@ -186,8 +253,11 @@ export class Sim {
       // to ~1.2·r_H and crashes by ~1.3·r_H; the QS approximation (which
       // neglects the planet's own gravity) is only valid from ~1.3·r_H out.
       if (r < 1.25 * hill) {
-        // Bound branch: circular retrograde around the planet.
-        const vCirc = circularSpeed(primary.mass, r)
+        // Bound branch: circular retrograde around the planet. μ includes
+        // the fab's own mass (coordinator fix #3) — the two-body circular
+        // speed is sqrt(G·(M+m)/r); at FAB_MASS_RATIO_MAX the fab is up to
+        // 5% of its primary, no longer a pure test particle.
+        const vCirc = circularSpeed(primary.mass + mass, r)
         const radial = norm(rel)
         const tangent = v(radial.y, -radial.x) // retrograde — see doc comment
         vel = v(primary.vel.x + tangent.x * vCirc, primary.vel.y + tangent.y * vCirc)
@@ -314,29 +384,23 @@ export class Sim {
       if (b.kind === 'fab' && !this.dead.has(b.name)) this.fabMasses.set(b.name, b.mass)
     }
 
-    // PD snapshot (see prevS/sDots doc comment): signed deviation s and its
-    // finite-difference rate for every assistable body, once per tick(),
-    // outside the integrator callback.
-    const elapsed = this.simTime - this.lastSnapshotTime
-    for (const b of this.bodies) {
-      if (!b.parentName || b.kind === 'ship' || b.kind === 'fab' || b.rNom === 0) continue
-      const parent = findBody(this.bodies, b.parentName)
-      if (!parent) continue
-      const s = (dist(b.pos, parent.pos) - b.rNom) / b.rNom
-      const sPrev = this.prevS.get(b.name)
-      if (sPrev !== undefined && elapsed > 0) {
-        this.sDots.set(b.name, (s - sPrev) / elapsed)
-      } else if (!this.sDots.has(b.name)) {
-        this.sDots.set(b.name, 0) // first tick: no rate history yet
-      }
-      this.prevS.set(b.name, s)
-    }
-    this.lastSnapshotTime = this.simTime
+    // Substep budget with fractional-remainder carry (coordinator fix #5) —
+    // see the tuRemainder doc comment. The tiny epsilon absorbs float slop
+    // in tu/DT ratios (e.g. 0.1/0.02) without ever manufacturing a step.
+    this.tuRemainder += tu
+    const steps = Math.floor(this.tuRemainder / DT + 1e-9)
+    if (steps <= 0) return
+    this.tuRemainder -= steps * DT
 
-    const steps = Math.ceil(tu / DT)
-    this.simTime += steps * DT
+    // PD snapshots re-run every ASSIST_SNAPSHOT_TU of substeps, keyed to
+    // the ABSOLUTE substep count — see the prevS/sDots doc comment
+    // (coordinator fix #1: per-tick-frozen sDot destabilized large ticks
+    // and made trajectories depend on the caller's tick partition).
+    const snapEvery = Math.max(1, Math.round(ASSIST_SNAPSHOT_TU / DT))
     for (let i = 0; i < steps; i++) {
+      if (this.stepCount % snapEvery === 0) this.snapshotPD()
       stepHierarchical(this.bodies, DT, this.extraAccel)
+      this.stepCount++
       for (const ev of this.tracker.update(this.bodies)) {
         this.events.push({ type: 'band', ...ev })
       }

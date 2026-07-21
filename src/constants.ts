@@ -41,8 +41,29 @@ export const RATE = { strip: 0.010, lattice: 0.003 } as const  // mass units per
 export const ASSIST_K = 1500           // TUNE: per-unit-fab-mass gain scale (retuned for real ≤0.05 fab masses)
 export const ASSIST_MAX = 0.15         // TUNE: saturation of the total PD gain K
 export const ASSIST_RANGE = 40
-export const SHIP_ASSIST = 0.02        // TUNE: direct gain contribution while the ship is stationed (setShipAssist)
+// Direct gain contribution while the ship is stationed (setShipAssist).
+// TUNE window measured against the healing proof (2-tu snapshot cadence):
+// ≥0.015 heals so fast the raw score reads 100 before the held band
+// finishes recovering to green (ordering churn); ≤0.008 is too weak to
+// pin deviation inside the envelope at all. 0.012 sits mid-window.
+export const SHIP_ASSIST = 0.012       // TUNE
 export const DAMP_RATIO = 2.0          // TUNE: 2.0 ⇒ critically damped; >2 overdamped
+// PD sDot refresh cadence in ABSOLUTE sim time (substep-count based, so the
+// trajectory is independent of how callers partition tick() calls). A sDot
+// frozen for a whole large tick is a stale derivative at high gain —
+// measured: tick(10)-frozen snapshots turned a clean rescue into an
+// ejection (relDist 5021).
+export const ASSIST_SNAPSHOT_TU = 2    // TUNE: keep ≤2; larger destabilizes big-tick callers
+
+// Fab placement guards (coordinator review, Task 8 follow-up)
+// Max fabMass/primary.mass when the placement binds to a planet. Measured
+// on mars (mass 0.11): a 0.01 fab (ratio 0.09) false-ambers mars via real
+// gravity; a 0.05 fab ejects it. Sun-bound placements skip this check
+// (sun mass 1000 — any real fab is negligible).
+export const FAB_MASS_RATIO_MAX = 0.05 // TUNE
+// Min distance from any LIVE fab. Measured: two 0.05 fabs at ≤6 u mutually
+// capture, collide, and doom the rescue.
+export const FAB_MIN_SEPARATION = 8    // TUNE
 
 // Dyson sphere (Task 11)
 export const SPHERE_MASS_REQUIRED = 12 // TUNE: total delivered mass to win

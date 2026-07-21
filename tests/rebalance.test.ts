@@ -54,13 +54,16 @@ describe('rebalance efficacy: PD assist at real fab masses (Task 8, amendment 11
         const devAtIntervention = deviationOf(titan, sim.bodies)
 
         const radial = norm(sub(titan.pos, saturn.pos))
-        sim.addFab({ x: titan.pos.x + radial.x * offset, y: titan.pos.y + radial.y * offset }, fabMass)
+        const fab = sim.addFab({ x: titan.pos.x + radial.x * offset, y: titan.pos.y + radial.y * offset }, fabMass)
+        expect(fab, label).not.toBeNull()
 
         const titanCatastrophes: SimEvent[] = []
+        const otherBodyBandEvents: SimEvent[] = []
         for (let t = 70; t < 600; t += 2) {
           sim.tick(2)
           for (const e of sim.drainEvents()) {
             if (isCatastrophe(e) && e.body === 'titan') titanCatastrophes.push(e)
+            if (isBand(e) && e.body !== 'titan') otherBodyBandEvents.push(e)
           }
         }
 
@@ -73,8 +76,58 @@ describe('rebalance efficacy: PD assist at real fab masses (Task 8, amendment 11
         expect(titanCatastrophes, label).toEqual([])
         expect(endBand, label).not.toBe('critical')
         expect(endDev, label).toBeLessThan(devAtIntervention)
+        // Coordinator fix #6: the rescue is surgically clean — the fab, the
+        // assist force, and titan's excursion never push ANY other body
+        // (saturn, siblings, planets) past its envelope.
+        expect(otherBodyBandEvents, label).toEqual([])
       }
     }
+  })
+
+  // --- Regression: tick-partition invariance (coordinator fix #1) ---------
+  //
+  // The PD snapshot cadence is keyed to the ABSOLUTE substep count
+  // (ASSIST_SNAPSHOT_TU), not to tick() call boundaries — so the physics
+  // must be EXACTLY independent of how a caller partitions the same total
+  // sim time. (Pre-fix, sDot was frozen for a whole tick: tick(10) chunks
+  // turned this same rescue into an ejection at relDist 5021 while tick(2)
+  // chunks rescued cleanly.) Both runs here advance identical substep
+  // sequences, so the outcome is asserted BITWISE identical.
+  it('tick-partition invariance: tick(0.1)×N ≡ tick(10)×M for the same rescue, bitwise', () => {
+    const run = (chunk: number) => {
+      const sim = new Sim(envelope)
+      const titan = findBody(sim.bodies, 'titan')!
+      const saturn = findBody(sim.bodies, 'saturn')!
+      extract(titan, 'strip', 0.0002, saturn.vel)
+      for (let t = 0; t < 70; t += chunk) sim.tick(chunk)
+      const radial = norm(sub(titan.pos, saturn.pos))
+      const fab = sim.addFab({ x: titan.pos.x + radial.x * 4, y: titan.pos.y + radial.y * 4 }, 0.05)
+      expect(fab).not.toBeNull()
+      let titanCatastrophes = 0
+      for (let t = 70; t < 600; t += chunk) {
+        sim.tick(chunk)
+        titanCatastrophes += sim.drainEvents()
+          .filter(e => isCatastrophe(e) && e.body === 'titan').length
+      }
+      return {
+        titanCatastrophes,
+        endDev: deviationOf(titan, sim.bodies),
+        endBand: sim.tracker.heldBand('titan'),
+        titanPos: { ...titan.pos },
+      }
+    }
+
+    const fine = run(0.1)
+    const coarse = run(10)
+    // eslint-disable-next-line no-console
+    console.log('partition invariance: fine endDev=', fine.endDev, 'coarse endDev=', coarse.endDev)
+
+    expect(fine.titanCatastrophes).toBe(0)
+    expect(coarse.titanCatastrophes).toBe(0)
+    // Bitwise: identical substep + snapshot sequences ⇒ identical floats.
+    expect(coarse.endDev).toBe(fine.endDev)
+    expect(coarse.titanPos).toEqual(fine.titanPos)
+    expect(coarse.endBand).toBe(fine.endBand)
   })
 
   // --- Sacred proof 2: ship-assist healing kills the flapping zone --------
@@ -174,11 +227,13 @@ describe('rebalance efficacy: PD assist at real fab masses (Task 8, amendment 11
     const saturn = findBody(sim.bodies, 'saturn')!
     const tRadial = norm(sub(titan.pos, saturn.pos))
     const titanFab = sim.addFab({ x: titan.pos.x + tRadial.x * 6, y: titan.pos.y + tRadial.y * 6 }, 0.05)
+    expect(titanFab).not.toBeNull()
 
     const ganymede = findBody(sim.bodies, 'ganymede')!
     const jupiter = findBody(sim.bodies, 'jupiter')!
     const gRadial = norm(sub(ganymede.pos, jupiter.pos))
     const ganymedeFab = sim.addFab({ x: ganymede.pos.x + gRadial.x * 6, y: ganymede.pos.y + gRadial.y * 6 }, 0.05)
+    expect(ganymedeFab).not.toBeNull()
 
     sim.tick(300)
     const events = sim.drainEvents()
@@ -187,10 +242,10 @@ describe('rebalance efficacy: PD assist at real fab masses (Task 8, amendment 11
     expect(events.filter(isBand)).toEqual([])
     expect(events.filter(isCatastrophe)).toEqual([])
     // Titan-side parking is stable — that fab must survive untouched.
-    expect(events.filter(e => isFabLost(e) && e.fab === titanFab.name)).toEqual([])
+    expect(events.filter(e => isFabLost(e) && e.fab === titanFab!.name)).toEqual([])
     // Only permissible event: the ganymede fab's own silent loss (see the
     // measured-finding comment above — it orbits outside jupiter's Hill
     // radius, unreachable parking for any helio-layer body).
-    expect(events.filter(e => !(isFabLost(e) && e.fab === ganymedeFab.name))).toEqual([])
+    expect(events.filter(e => !(isFabLost(e) && e.fab === ganymedeFab!.name))).toEqual([])
   })
 })
