@@ -24,9 +24,13 @@ export class Renderer {
 
     this.composer = new EffectComposer(this.renderer)
     this.composer.addPass(new RenderPass(this.scene, this.camera))
-    // Lower threshold ~0 so even mid stars catch bloom; higher strength so the
-    // brightest "hero" stars visibly burn with halos.
-    this.composer.addPass(new UnrealBloomPass(new THREE.Vector2(innerWidth, innerHeight), 1.1, 0.6, 0.0))
+    // Bloom threshold 0.32 (was 0.0): only genuinely bright emitters — the sun
+    // and the hero/near stars whose cores exceed ~1.0 luminance — burn with
+    // halos. A ~0 threshold also blooms mid-bright planet SURFACES, which
+    // blows the close-up bridge view (Task 13) into featureless white blobs;
+    // gating at 0.32 keeps Saturn's bands and Titan's ice legible up close
+    // while the sky's hero stars (near layer, brightness 1.3) still clear it.
+    this.composer.addPass(new UnrealBloomPass(new THREE.Vector2(innerWidth, innerHeight), 1.1, 0.6, 0.32))
 
     addEventListener('resize', () => {
       this.camera.aspect = innerWidth / innerHeight

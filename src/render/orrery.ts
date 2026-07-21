@@ -113,11 +113,16 @@ export class Orrery {
       // planet / moon: lit standard material, textured where available, with a
       // soft self-emissive so every world reads against the bright sky even on
       // its night side (the sun lights the day side on top of this).
+      // Emissive is a FAINT fill so night sides / far worlds don't fall to pure
+      // black against the bright sky — NOT a light source. It is deliberately
+      // low (0.12 / 0.1) so it never trips the bloom threshold (0.32) when a
+      // planet fills the bridge view; the sun PointLight does the real lighting
+      // and preserves surface texture detail up close (Task 13 bridge fix).
       const base = FALLBACK_COLOR[b.name] ?? 0x888888
       const mat = new THREE.MeshStandardMaterial({
         color: base,
         emissive: base,
-        emissiveIntensity: 0.35,
+        emissiveIntensity: 0.12,
         roughness: 0.9,
         metalness: 0.0,
       })
@@ -126,7 +131,7 @@ export class Orrery {
         mat.emissiveMap = t
         mat.color.set(0xffffff)
         mat.emissive.set(0xffffff)
-        mat.emissiveIntensity = 0.3
+        mat.emissiveIntensity = 0.1
         mat.needsUpdate = true
       })
       const seg = b.kind === 'planet' ? 32 : 20

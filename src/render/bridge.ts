@@ -23,11 +23,14 @@ export class BridgeFrame {
   // Seconds for a full 0<->1 hull-frame fade.
   private static readonly FADE_SECONDS = 0.5
 
-  // Base inner shadow always present when the frame is visible (the hull
-  // interior falloff). setAlarm layers a red rim on top of this.
-  private static readonly BASE_SHADOW = 'inset 0 0 160px rgba(0,0,0,0.92)'
+  // Base shadow when the frame is visible: a deep interior vignette PLUS a
+  // faint blue-white inner rim (the lit edge of the viewport glass) and a soft
+  // inner glow, so the frame clearly reads as a ship window rather than a vague
+  // darkening. setAlarm swaps the rim/glow to red on top of the same vignette.
+  private static readonly BASE_SHADOW =
+    'inset 0 0 200px 30px rgba(0,0,0,0.95), inset 0 0 0 2px rgba(150,180,225,0.3), inset 0 0 28px rgba(120,160,210,0.14)'
   private static readonly ALARM_SHADOW =
-    'inset 0 0 160px rgba(0,0,0,0.92), inset 0 0 90px rgba(224,60,60,0.6)'
+    'inset 0 0 200px 30px rgba(0,0,0,0.95), inset 0 0 0 2px rgba(235,90,90,0.5), inset 0 0 70px rgba(224,60,60,0.55)'
 
   constructor(hud: HTMLElement) {
     this.el = document.createElement('div')
@@ -39,8 +42,8 @@ export class BridgeFrame {
     this.el.style.cssText = `
       position:absolute; inset:0; opacity:0; pointer-events:none;
       background:
-        linear-gradient(105deg, #080b12 0%, rgba(8,11,18,0.85) 8%, transparent 20%, transparent 80%, rgba(8,11,18,0.85) 92%, #080b12 100%),
-        linear-gradient(180deg, #080b12 0%, rgba(8,11,18,0.8) 5%, transparent 16%, transparent 86%, rgba(8,11,18,0.9) 96%, #080b12 100%);
+        linear-gradient(105deg, #04060b 0%, #04060b 6%, rgba(6,9,15,0.9) 13%, transparent 26%, transparent 74%, rgba(6,9,15,0.9) 87%, #04060b 94%, #04060b 100%),
+        linear-gradient(180deg, #04060b 0%, #04060b 4%, rgba(6,9,15,0.88) 10%, transparent 22%, transparent 80%, rgba(6,9,15,0.9) 90%, #04060b 96%, #04060b 100%);
       box-shadow: ${BridgeFrame.BASE_SHADOW};`
     hud.appendChild(this.el)
   }

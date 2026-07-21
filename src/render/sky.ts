@@ -224,7 +224,7 @@ export class Sky {
       milkyWayBand(q.mw, 2600, 77),
       starLayer(q.far, 2400, 1.6, 11, { brightness: 0.85 }), // far dust
       starLayer(q.mid, 1900, 2.8, 22, { heroScale: 1.5 }), // mid
-      starLayer(q.near, 1500, 6.5, 33, { heroScale: 6, brightness: 1.15 }), // near bright / hero stars
+      starLayer(q.near, 1500, 6.5, 33, { heroScale: 6, brightness: 1.3 }), // near bright / hero stars (>bloom threshold 0.32)
     ]
     this.layers.forEach((l) => this.group.add(l))
 
