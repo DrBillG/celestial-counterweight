@@ -16,6 +16,7 @@ export const DEV_GAIN = 1200           // TUNE: deviation → score steepness
 export const BAND_AMBER = 85
 export const BAND_RED = 60
 export const BAND_CRITICAL = 30
+export const ENV_MARGIN = 0.01  // absolute slack over the pristine envelope; mining elsewhere shifts ambient forcing slightly
 export const RUNAWAY_ACCEL = 0.004     // TUNE: designed instability past critical
 export const EJECT_RADIUS = 600        // beyond this from sun = ejected (lose event)
 
