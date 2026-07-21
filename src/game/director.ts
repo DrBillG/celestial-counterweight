@@ -89,6 +89,14 @@ export class Director {
     return this.target
   }
 
+  // The extraction mode currently running (null when none is engaged — e.g.
+  // not mining, or the floor auto-stopped it). The HUD (Task 14) surfaces
+  // this as the active mining-mode indicator; scenario bots (Task 10) poll
+  // it to detect the extraction-floor auto-stop without touching internals.
+  activeExtraction(): ExtractionMode | null {
+    return this.mode
+  }
+
   // Risk tag for the HUD/mining UI.
   //  - phobos: ~40× more dose-fragile than titan AND effectively unrescuable
   //    (mars-bound fabs are rejected by the mass-ratio guard, amendment 12(d)).

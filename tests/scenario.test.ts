@@ -16,10 +16,10 @@
 // was set to 0.012 (≈57% of it) so a careful player wins with comfortable
 // margin while a reckless one reliably loses.
 import { describe, it, expect } from 'vitest'
-import { Director, type GameEvent } from '../src/game/director'
+import { Director, type GameEvent, type DirectorState } from '../src/game/director'
 import { computeBaselineEnvelope } from '../src/sim/stability'
 import { findBody } from '../src/sim/data'
-import { RUN_DURATION, SIM_RATE, SPHERE_MASS_REQUIRED, EXTRACTION_FLOOR } from '../src/constants'
+import { RUN_DURATION, SIM_RATE, EXTRACTION_FLOOR } from '../src/constants'
 
 // Coordinator convention (sim.test.ts / director.test.ts): the ~0.3s
 // deterministic null probe is computed ONCE at module top and shared into
@@ -52,6 +52,16 @@ function heldBand(d: Director, name: string): string {
   } catch {
     return 'green'
   }
+}
+
+// Read the live director state as the WIDE union. Bots mutate d.state
+// through method calls (advance/placeSegment/launch) that TS's control-flow
+// analysis can't see into, so a bare `d.state` stays narrowed to whatever a
+// prior `if` proved and later comparisons wrongly read as impossible. Going
+// through this helper returns the full DirectorState each time and defeats
+// that stale narrowing.
+function stateOf(d: Director): DirectorState {
+  return d.state
 }
 
 // Fly to a target and consume the whole transit. Returns tu elapsed.
@@ -99,21 +109,21 @@ function runGreedy(d: Director): GreedyResult {
   elapsed += fly(d, 'titan')
   scanLoss(d, elapsed, loss)
   d.chooseExtraction('strip')
-  while (elapsed < RUN_DURATION && d.state !== 'lost') {
+  while (elapsed < RUN_DURATION && stateOf(d) !== 'lost') {
     // keep stripping — re-arm if the floor auto-stopped the mode
-    if (d.state === 'mining' && d.mode == null) d.chooseExtraction('strip')
+    if (stateOf(d) === 'mining' && d.activeExtraction() == null) d.chooseExtraction('strip')
     // cargo high → dump it HASTY wherever we are, then run back to titan
-    if (d.state === 'mining' && d.cargo > 0.004) {
+    if (stateOf(d) === 'mining' && d.cargo > 0.004) {
       elapsed += fly(d, 'fab')
       scanLoss(d, elapsed, loss)
       d.placeSegment('hasty')
-      for (let i = 0; i < 10 && d.state === 'constructing'; i++) {
+      for (let i = 0; i < 10 && stateOf(d) === 'constructing'; i++) {
         d.advance(STEP)
         elapsed += STEP
         scanLoss(d, elapsed, loss)
       }
       peakProgress = Math.max(peakProgress, d.sphereProgress())
-      if (d.state === 'orrery') {
+      if (stateOf(d) === 'orrery') {
         elapsed += fly(d, 'titan')
         scanLoss(d, elapsed, loss)
         d.chooseExtraction('strip')
@@ -125,7 +135,7 @@ function runGreedy(d: Director): GreedyResult {
     scanLoss(d, elapsed, loss)
   }
   peakProgress = Math.max(peakProgress, d.sphereProgress())
-  return { state: d.state, peakProgress, loss, elapsed }
+  return { state: stateOf(d), peakProgress, loss, elapsed }
 }
 
 // ---- EFFICIENT BOT -------------------------------------------------------
@@ -154,7 +164,7 @@ function runEfficient(d: Director): EfficientResult {
   const loss: Loss = { lost: false, cause: 'none', atTu: -1 }
   let elapsed = 0
   let rounds = 0
-  while (elapsed < RUN_DURATION && d.state !== 'won' && d.state !== 'lost') {
+  while (elapsed < RUN_DURATION && stateOf(d) !== 'won' && stateOf(d) !== 'lost') {
     // richest SAFE body with mining headroom left above its floor
     let target: string | null = null
     let bestHeadroom = 1e-6
@@ -170,26 +180,26 @@ function runEfficient(d: Director): EfficientResult {
 
     elapsed += fly(d, target)
     scanLoss(d, elapsed, loss)
-    if (d.state !== 'mining') break
+    if (stateOf(d) !== 'mining') break
 
     // Lattice-mine until the held band leaves green (back off at amber) or
     // the floor auto-stops the mode. heldBand is the polled stability signal;
     // band DirectorEvents in the drained stream say the same thing.
     d.chooseExtraction('lattice')
-    while (elapsed < RUN_DURATION && d.state === 'mining' && d.mode != null) {
+    while (elapsed < RUN_DURATION && stateOf(d) === 'mining' && d.activeExtraction() != null) {
       d.advance(STEP)
       elapsed += STEP
       scanLoss(d, elapsed, loss)
       if (heldBand(d, target) !== 'green') break // amber → back off
     }
-    if (d.state === 'lost') break
+    if (stateOf(d) === 'lost') break
 
     // Depart (ends any stationing) and deliver as a counterweight segment.
-    if (d.state === 'mining' && d.cargo > 0) {
+    if (stateOf(d) === 'mining' && d.cargo > 0) {
       elapsed += fly(d, 'fab')
       scanLoss(d, elapsed, loss)
       d.placeSegment('suggested')
-      for (let i = 0; i < 12 && d.state === 'constructing'; i++) {
+      for (let i = 0; i < 12 && stateOf(d) === 'constructing'; i++) {
         d.advance(STEP)
         elapsed += STEP
         scanLoss(d, elapsed, loss)
@@ -198,7 +208,7 @@ function runEfficient(d: Director): EfficientResult {
     rounds++
     if (rounds > 400) break // safety valve; the real win takes < 10 rounds
   }
-  return { state: d.state, progress: d.sphereProgress(), rounds, loss, elapsed }
+  return { state: stateOf(d), progress: d.sphereProgress(), rounds, loss, elapsed }
 }
 
 describe('Scenario bots (Task 10): winnable · losable · honest', () => {
@@ -262,13 +272,13 @@ describe('Scenario bots (Task 10): winnable · losable · honest', () => {
     elapsed += fly(d, 'mars')
     scanLoss(d, elapsed, loss)
     d.chooseExtraction('strip')
-    while (elapsed < RUN_DURATION && d.state !== 'lost') {
-      if (d.state === 'mining' && d.mode == null) d.chooseExtraction('strip')
+    while (elapsed < RUN_DURATION && stateOf(d) !== 'lost') {
+      if (stateOf(d) === 'mining' && d.activeExtraction() == null) d.chooseExtraction('strip')
       d.advance(STEP)
       elapsed += STEP
       scanLoss(d, elapsed, loss)
     }
-    expect(d.state).toBe('lost')
+    expect(stateOf(d)).toBe('lost')
     expect(loss.cause).toContain('phobos') // the poisoned moon is what dies
     // eslint-disable-next-line no-console
     console.log(`  mars trap: lost at t=${loss.atTu} (${loss.cause})`)
@@ -288,7 +298,7 @@ describe('Scenario bots (Task 10): winnable · losable · honest', () => {
     }
     expect(catastrophes).toBe(0)
     expect(bandEvents).toBe(0) // the equilibrium holds the envelope — zero alarms
-    expect(d.state).toBe('orrery') // still a valid, playable, non-lost state
+    expect(stateOf(d)).toBe('orrery') // still a valid, playable, non-lost state
     expect(d.sphereProgress()).toBe(0)
   })
 })
