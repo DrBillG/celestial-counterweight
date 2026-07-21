@@ -12,6 +12,13 @@ import { v, type Vec } from './vec'
 // velocities (a1) and once against post-drift velocities (a2), so a
 // velocity-dependent term would see two inconsistent velocity values within
 // a single step, corrupting the leapfrog integration this game depends on.
+//
+// Additional constraints under stepHierarchical():
+// - Must not read ANY body's mass: heliocentric bodies carry temporarily
+//   boosted masses (parent + its moons) while layer 1 evaluates extra.
+// - During layer-1 evaluation, moon positions are stale (still at time t).
+// - During layer-2 evaluation, heliocentric positions are already at t+dt;
+//   the moon being evaluated has its absolute pos synced before each call.
 export type ExtraAccel = (b: Body, i: number) => Vec
 
 // Circular-orbit speed against the softened potential. Using the naive
@@ -83,6 +90,9 @@ export function step(bodies: Body[], dt: number, extra?: ExtraAccel): void {
 // layer-1 bodies via step(), moons inside the layer-2 kernel (the moon's
 // absolute pos is synced to parent-new + rel before each evaluation, and
 // extra receives the body's index in the ORIGINAL bodies array).
+//
+// Note: moons are gravitationally invisible to ship/fabs and vice versa —
+// cross-layer influence happens only via `extra`.
 export function stepHierarchical(bodies: Body[], dt: number, extra?: ExtraAccel): void {
   // Partition: heliocentric layer vs moons.
   const helio: Body[] = []
@@ -109,12 +119,16 @@ export function stepHierarchical(bodies: Body[], dt: number, extra?: ExtraAccel)
     relVX[k] = m.vel.x - p.vel.x; relVY[k] = m.vel.y - p.vel.y
   }
 
-  // Layer 1: planets carry their moon systems' mass. Restore after.
+  // Layer 1: planets carry their moon systems' mass. Restore after —
+  // try/finally so a throwing `extra` can't leave boosted masses behind.
   const realMass = helio.map(b => b.mass)
   for (let k = 0; k < nm; k++) parentOf[k].mass += moons[k].mass
-  const extraHelio = extra ? (b: Body, i: number) => extra(b, helioIdx[i]) : undefined
-  step(helio, dt, extraHelio)
-  for (let i = 0; i < helio.length; i++) helio[i].mass = realMass[i]
+  try {
+    const extraHelio = extra ? (b: Body, i: number) => extra(b, helioIdx[i]) : undefined
+    step(helio, dt, extraHelio)
+  } finally {
+    for (let i = 0; i < helio.length; i++) helio[i].mass = realMass[i]
+  }
 
   // Layer 2: per-parent relative KDK for the moons.
   // Relative acceleration on moon k: central (parent's current mass) +

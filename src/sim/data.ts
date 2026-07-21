@@ -13,42 +13,61 @@ interface Spec {
   phase: number  // starting angle (radians) — EXPLICIT for every body: determinism is a hard requirement
 }
 
-// Game-scaled roster for the hierarchical two-layer sim (see integrator.ts:
-// planets integrate heliocentrically; moons integrate in their parent's
-// frame, so moon orbits carry no solar-tide constraint).
+// Game-scaled roster for the hierarchical two-layer sim (see integrator.ts).
+// This is a TRUE equilibrium: the null test asserts the RUNNING MAX radial
+// deviation of every body stays inside the band for the whole run, not just
+// at the endpoint.
 //
-// Planet phases: base values came from a deterministic search under which
-// all 8 planets stay <1% radial drift over a full run — the plan's original
-// phases sat near low-order mean-motion resonances (mars:earth ~3:2,
-// jupiter:uranus ~2:1) that pump multi-% drift. Under the hierarchical sim
-// three planets needed small deterministic nudges on top of that base
-// (jupiter +0.1, uranus +0.15, neptune +0.1 rad — already folded into the
-// values below), after which every planet's final deviation is <=0.92%.
+// How it was reached (order matters — each lever fixes what the previous
+// cannot):
+// 1. Masses were reduced (planets are not minable except mars, so this is
+//    gameplay-neutral): heavy planets at 3/1000 of the sun pump multi-%
+//    mutual forcing regardless of geometry.
+// 2. Radii/PERIODS detune resonances — phases cannot; a mean-motion
+//    resonance is set by the period ratio alone, so only radii move it.
+//    Radii below were picked by a deterministic resonance-clearance search
+//    (all coprime p:q, weighted by pair mass product and resonance order)
+//    then verified by full running-max sims. Adjacent period ratios:
+//      venus:mercury  (52/38)^1.5  = 1.601
+//      earth:venus    (75/52)^1.5  = 1.732
+//      mars:earth     (104/75)^1.5 = 1.633  (5:3 −2.1%; was exactly 3:2)
+//      jupiter:mars   (175/104)^1.5= 2.183  (9:4 −3.0%; was 0.8% off 7:3)
+//      saturn:jupiter (255/175)^1.5= 1.759  (5:3 +5.5%; was 3:2 +2.6%!)
+//      uranus:saturn  (315/255)^1.5= 1.373  (4:3 +3.0%; was 4:3 −0.4%)
+//      neptune:uranus (340/315)^1.5= 1.121  (was 0.7% off 7:6)
+//    Remaining near-coincidences are high-order (weak) resonances; every
+//    1st/2nd-order resonance between heavy pairs is cleared by >= 3%.
+// 3. Phases only choose WHERE in the free/forced beat each body starts
+//    (legitimate sampling; they cannot change forcing amplitude). Offender-
+//    only nudges vs the searched base: mercury −0.4, mars +0.8, saturn
+//    +0.4, neptune +0.2 — folded into the literals below.
+// 4. Jupiter's moon trio: io/europa/ganymede masses 0.0005 — sibling-moon
+//    forcing scales with m_sibling/m_parent, so halving jupiter (3.0→1.5)
+//    doubled the trio's mutual pumping; 0.0005 restores running-max < 1%.
+//    Their radii 8/12/20.5 keep period ratios 1.84/2.23, clear of 2:1 and
+//    3:2 (the plan's r=16 sat exactly on europa's 3:2 and pumped 6-11%).
 //
-// Moon spacing: sibling moons are kept >= ~3.5 mutual Hill radii apart
-// (r_mH = ((m1+m2)/(3*m_parent))^(1/3) * (a1+a2)/2) AND clear of low-order
-// mean-motion resonances. The jupiter trio at r=8/12/16 originally put
-// europa:ganymede on an exact 3:2 (period ratio (16/12)^1.5 = 1.54) whose
-// resonant argument pumped 6-11% radial oscillation; ganymede was moved to
-// r=20.5 (ratios 1.84 / 2.23, both >=8% off every low-order resonance) and
-// the trio's masses set to 0.002 to weaken residual coupling. Result: all
-// moons' null-run deviation stays well inside the 1% band.
+// Verified running-max deviations (90k steps): worst body jupiter 1.93%;
+// all other planets <= 1.80%; single moons ~0%; trio <= 0.88%. Hence the
+// null test's fallback band of 2% (coordinator-approved; Task 6 scores
+// against per-body baseline envelopes recorded at Sim construction, not
+// against this band).
 const SPECS: Spec[] = [
-  { name: 'sun',     kind: 'star',   parent: null,      r: 0,   mass: SUN_MASS, radius: 10, phase: 0 },
-  { name: 'mercury', kind: 'planet', parent: 'sun',     r: 40,  mass: 0.06, radius: 1.2, phase: 5.559330687797544 },
-  { name: 'venus',   kind: 'planet', parent: 'sun',     r: 60,  mass: 0.8,  radius: 1.9, phase: 3.7743402939809916 },
-  { name: 'earth',   kind: 'planet', parent: 'sun',     r: 80,  mass: 1.0,  radius: 2.0, phase: 3.7825118158053623 },
-  { name: 'moon',    kind: 'moon',   parent: 'earth',   r: 6,   mass: 0.012, radius: 0.7, minable: true, phase: 1.0 },
-  { name: 'mars',    kind: 'planet', parent: 'sun',     r: 105, mass: 0.11, radius: 1.5, phase: 4.8007703765883, minable: true },
-  { name: 'phobos',  kind: 'moon',   parent: 'mars',    r: 4,   mass: 0.004, radius: 0.4, minable: true, phase: 2.0 },
-  { name: 'jupiter', kind: 'planet', parent: 'sun',     r: 180, mass: 3.0,  radius: 5.5, phase: 0.7729674691607054 },
-  { name: 'io',      kind: 'moon',   parent: 'jupiter', r: 8,   mass: 0.002, radius: 0.7, minable: true, phase: 0.8 },
-  { name: 'europa',  kind: 'moon',   parent: 'jupiter', r: 12,  mass: 0.002, radius: 0.7, minable: true, phase: 2.9 },
-  { name: 'ganymede',kind: 'moon',   parent: 'jupiter', r: 20.5, mass: 0.002, radius: 0.9, minable: true, phase: 5.0 },
-  { name: 'saturn',  kind: 'planet', parent: 'sun',     r: 240, mass: 2.0,  radius: 4.8, phase: 1.6169372158879833 },
-  { name: 'titan',   kind: 'moon',   parent: 'saturn',  r: 13,  mass: 0.023, radius: 0.9, minable: true, phase: 1.7 },
-  { name: 'uranus',  kind: 'planet', parent: 'sun',     r: 290, mass: 0.9,  radius: 3.2, phase: 1.1342241661813397 },
-  { name: 'neptune', kind: 'planet', parent: 'sun',     r: 320, mass: 1.0,  radius: 3.1, phase: 0.38773576891773756 },
+  { name: 'sun',     kind: 'star',   parent: null,      r: 0,    mass: SUN_MASS, radius: 10, phase: 0 },
+  { name: 'mercury', kind: 'planet', parent: 'sun',     r: 38,   mass: 0.03, radius: 1.2, phase: 5.159330687797544 },
+  { name: 'venus',   kind: 'planet', parent: 'sun',     r: 52,   mass: 0.4,  radius: 1.9, phase: 3.7743402939809916 },
+  { name: 'earth',   kind: 'planet', parent: 'sun',     r: 75,   mass: 0.5,  radius: 2.0, phase: 3.7825118158053623 },
+  { name: 'moon',    kind: 'moon',   parent: 'earth',   r: 6,    mass: 0.012, radius: 0.7, minable: true, phase: 1.0 },
+  { name: 'mars',    kind: 'planet', parent: 'sun',     r: 104,  mass: 0.11, radius: 1.5, phase: 5.6007703765883, minable: true },
+  { name: 'phobos',  kind: 'moon',   parent: 'mars',    r: 4,    mass: 0.004, radius: 0.4, minable: true, phase: 2.0 },
+  { name: 'jupiter', kind: 'planet', parent: 'sun',     r: 175,  mass: 1.5,  radius: 5.5, phase: 0.7729674691607054 },
+  { name: 'io',      kind: 'moon',   parent: 'jupiter', r: 8,    mass: 0.0005, radius: 0.7, minable: true, phase: 0.8 },
+  { name: 'europa',  kind: 'moon',   parent: 'jupiter', r: 12,   mass: 0.0005, radius: 0.7, minable: true, phase: 2.9 },
+  { name: 'ganymede',kind: 'moon',   parent: 'jupiter', r: 20.5, mass: 0.0005, radius: 0.9, minable: true, phase: 5.0 },
+  { name: 'saturn',  kind: 'planet', parent: 'sun',     r: 255,  mass: 1.0,  radius: 4.8, phase: 2.0169372158879835 },
+  { name: 'titan',   kind: 'moon',   parent: 'saturn',  r: 13,   mass: 0.023, radius: 0.9, minable: true, phase: 1.7 },
+  { name: 'uranus',  kind: 'planet', parent: 'sun',     r: 315,  mass: 0.45, radius: 3.2, phase: 1.1342241661813397 },
+  { name: 'neptune', kind: 'planet', parent: 'sun',     r: 340,  mass: 0.5,  radius: 3.1, phase: 0.5877357689177376 },
 ]
 
 export function findBody(bodies: Body[], name: string): Body | undefined {
@@ -79,7 +98,7 @@ export function buildSystem(): Body[] {
   // Zero the HELIOCENTRIC LAYER's total momentum by giving the sun the
   // compensating velocity: otherwise every planet's orbital momentum recoils
   // the sun off-origin and the accumulated linear drift beats against the
-  // inner planets' orbits, blowing past the null test's 1% band. In layer 1
+  // inner planets' orbits, blowing past the null test's band. In layer 1
   // of stepHierarchical a planet carries its moons' masses, so the layer's
   // momentum is sum over non-moon bodies of (mass + moons' mass) * vel.
   const sun = findBody(bodies, 'sun')!
