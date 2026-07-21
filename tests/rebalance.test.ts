@@ -20,240 +20,177 @@ function isFabLost(e: SimEvent): e is Extract<SimEvent, { type: 'fabLost' }> {
   return e.type === 'fabLost'
 }
 
-describe('rebalance efficacy: counterweights & slag healing (Task 8)', () => {
-  // --- Lever 1: counterweight fab -----------------------------------------
+describe('rebalance efficacy: PD assist at real fab masses (Task 8, amendment 11)', () => {
+  // --- Sacred proof 1: grid-robust rescue ---------------------------------
   //
-  // MEASURED FINDING (reported to coordinator, see final task report): with
-  // RUNAWAY_ACCEL/ASSIST_K/ASSIST_RANGE at their committed values, a mass-5
-  // fab at offset 2-6 (and every mass up to 50 / offset up to 80 tried
-  // beyond that hint) does NOT achieve a full save (zero catastrophe AND
-  // exit 'critical') for this exact dose/timing — deviation is already
-  // 11%+ by t=70 (11 tu into 'critical', compounding exponentially per
-  // amendment 10's runaway formula) and the assist's undamped, position-only
-  // restoring force either arrests too little (parent collision, same as
-  // control) or overcorrects past nominal — where the still-active runaway
-  // (which always pushes AWAY from nominal on whichever side the body sits)
-  // reinforces the overshoot into an ejection. A narrow rescue window DOES
-  // exist but only after reducing RUNAWAY's critical-band multiplier
-  // (currently x10) to ~x3 AND hitting a knife-edge mass/offset (e.g.
-  // mass=1.1-1.2, offset=8.4-8.6 — a change of 0.05 flips the outcome) —
-  // too chaotically fragile to commit as a real constant retune or bake
-  // into a test. Per this task's explicit instruction ("do not touch
-  // RUNAWAY/ASSIST constants without reporting"), constants are left
-  // UNCHANGED here; this is reported as a BLOCKED finding for Task 9/10.
-  //
-  // What IS robustly, reproducibly true (verified across offset 2-6, mass
-  // 5-8 — 36/36 combinations): the counterweight fab ALWAYS measurably
-  // delays titan's catastrophe relative to doing nothing (control collides
-  // at t~=104; every rescue combination pushed that past t=108, several
-  // past t=140). That is a genuine, physical, non-fragile effect of the
-  // lever — this test proves THAT claim precisely, rather than the
-  // stronger "guarantees survival" claim that the current tuning can't
-  // support for this specific worst-case-timed intervention.
-  it('a counterweight fab measurably delays titan\'s collapse relative to doing nothing', () => {
-    const control = new Sim(envelope)
-    const rescue = new Sim(envelope)
+  // Amendment 11(b)/(d): the assist is a PD controller and the rescue proof
+  // must hold across a small parameter GRID, not a single knife-edge point.
+  // Scenario (amendment 10 measured timeline): titan strip dose 0.0002 →
+  // amber t≈33, red t≈46, critical t≈59, unassisted parent collision t≈104.
+  // We intervene LATE (t=70, deviation ≈11%, held score already 0) with a
+  // single REAL-mass fab (cargo-built, ≤0.05 — amendment 11(a)) and require
+  // a full save for EVERY grid cell:
+  //   - no titan catastrophe through t=600,
+  //   - held band exits 'critical' by t=600 (held recovery is capped at
+  //     HELD_RECOVERY_PER_TU=0.25/tu from 0, so exit can't happen before
+  //     t≈190 — the PD must PIN deviation near the envelope for 120+ tu
+  //     against the still-active runaway, not just nudge it),
+  //   - no ejection-style overshoot: end deviation < deviation at
+  //     intervention (the old constant-magnitude assist failed exactly here
+  //     — arrest-or-overshoot knife edge, overshoot reinforced by runaway
+  //     into ejection).
+  it('grid-robust rescue: every fabMass × offset cell fully saves titan from late-critical', () => {
+    for (const fabMass of [0.03, 0.05]) {
+      for (const offset of [2, 4]) {
+        const label = `fabMass=${fabMass} offset=${offset}`
+        const sim = new Sim(envelope)
+        const titan = findBody(sim.bodies, 'titan')!
+        const saturn = findBody(sim.bodies, 'saturn')!
+        extract(titan, 'strip', 0.0002, saturn.vel)
 
-    const ct = findBody(control.bodies, 'titan')!
-    const cs = findBody(control.bodies, 'saturn')!
-    extract(ct, 'strip', 0.0002, cs.vel)
+        sim.tick(70)
+        sim.drainEvents()
+        expect(sim.tracker.heldBand('titan'), label).toBe('critical')
+        const devAtIntervention = deviationOf(titan, sim.bodies)
 
-    const rt = findBody(rescue.bodies, 'titan')!
-    const rs = findBody(rescue.bodies, 'saturn')!
-    extract(rt, 'strip', 0.0002, rs.vel)
+        const radial = norm(sub(titan.pos, saturn.pos))
+        sim.addFab({ x: titan.pos.x + radial.x * offset, y: titan.pos.y + radial.y * offset }, fabMass)
 
-    // Control: no intervention — amendment 10 timeline says titan collides
-    // with saturn around t~=104.
-    let controlCollideT = -1
-    for (let t = 0; t < 400 && controlCollideT < 0; t += 2) {
-      control.tick(2)
-      for (const e of control.drainEvents()) {
-        if (isCatastrophe(e) && e.body === 'titan') controlCollideT = t + 2
+        const titanCatastrophes: SimEvent[] = []
+        for (let t = 70; t < 600; t += 2) {
+          sim.tick(2)
+          for (const e of sim.drainEvents()) {
+            if (isCatastrophe(e) && e.body === 'titan') titanCatastrophes.push(e)
+          }
+        }
+
+        const endDev = deviationOf(titan, sim.bodies)
+        const endBand = sim.tracker.heldBand('titan')
+        // eslint-disable-next-line no-console
+        console.log(`rescue grid ${label}: catastrophes=${titanCatastrophes.length}`,
+          `endBand=${endBand} devAtIntervention=${devAtIntervention.toFixed(4)} endDev=${endDev.toFixed(4)}`)
+
+        expect(titanCatastrophes, label).toEqual([])
+        expect(endBand, label).not.toBe('critical')
+        expect(endDev, label).toBeLessThan(devAtIntervention)
       }
     }
-    expect(controlCollideT).toBeGreaterThan(0)
-
-    // Rescue: let titan go early-critical (t~=59 per amendment 10) but
-    // intervene BEFORE the t~=104 parent-collision.
-    rescue.tick(70)
-    rescue.drainEvents()
-    expect(rescue.tracker.heldBand('titan')).toBe('critical')
-
-    const radial = norm(sub(rt.pos, rs.pos))
-    rescue.addFab({ x: rt.pos.x + radial.x * 4, y: rt.pos.y + radial.y * 4 }, 5)
-
-    let rescueCollideT = -1
-    for (let t = 70; t < 400 && rescueCollideT < 0; t += 2) {
-      rescue.tick(2)
-      for (const e of rescue.drainEvents()) {
-        if (isCatastrophe(e) && e.body === 'titan') rescueCollideT = t + 2
-      }
-    }
-
-    // eslint-disable-next-line no-console
-    console.log('rescue delay measurement: control collided at t=', controlCollideT,
-      'rescue collided at t=', rescueCollideT,
-      'delay=', rescueCollideT - controlCollideT)
-
-    expect(rescueCollideT).toBeGreaterThan(0)
-    // Robust, reproducible margin (measured minimum across the whole
-    // suggested tuning grid was +4tu; the literal instructed mass=5/offset=4
-    // point measured +28tu — use a conservative fraction of that as the bar).
-    expect(rescueCollideT).toBeGreaterThan(controlCollideT * 1.15)
   })
 
-  // --- Lever 2: slag-accretion healing ------------------------------------
+  // --- Sacred proof 2: ship-assist healing kills the flapping zone --------
   //
-  // MEASURED FINDING: giving back exactly the literal extracted amount
-  // (dm=0.00005) has a NEGLIGIBLE effect on titan (mass 0.023) even at
-  // dm→infinity applied at the literal "t=100" checkpoint: the momentum-
-  // weighted mixing weight dm/(mass+dm) caps how much of the ORIGINAL
-  // extraction kick (a full, undiluted impulse) can be undone, and — more
-  // fundamentally — returnSlag's target velocity is PURELY TANGENTIAL at
-  // the CURRENT radius, which only cancels eccentricity cleanly when
-  // applied near a natural r~=rNom crossing (the current radius becomes an
-  // apsis of the corrected orbit; correcting far from rNom just creates a
-  // *new*, similarly-sized eccentricity on the other side — confirmed
-  // empirically even with dm=100, i.e. ~4300x titan's own mass, applied at
-  // t=100: flapping persists, score plateaus ~60-66, never near 100).
-  // Titan's post-strip orbit has a ~280tu natural eccentricity period
-  // (dev returns to ~0% around t~=284 before growing again) — this test
-  // waits for that natural low-deviation moment (found by scanning, not a
-  // hardcoded magic tick, so it stays correct if upstream physics changes)
-  // and returns a game-realistic "dump cargo mass to heal this moon"
-  // amount (0.1 — still a fraction of titan's own mass, ~4x the extracted
-  // 0.00005) rather than the literal extracted amount, which is provably
-  // too small to matter for a body titan's size. See final task report for
-  // the full measured dose/timing landscape.
-  it('returning slag heals titan out of the flapping-klaxon zone and stops the flapping', () => {
+  // Amendment 10: dose 0.00005 on titan is the permanent flapping-klaxon
+  // zone — band events forever (~283 tu epicyclic period), no cascade, and
+  // (pre-PD) no healing: returnSlag's vis-viva accretion at the literal
+  // extracted mass is provably negligible for a body titan's size. The PD
+  // ship assist (amendment 11(c)) does the ORBITAL healing; the slag mass
+  // does the budget/coupling healing. Durability: after the ship leaves
+  // (setShipAssist(null)), the healed orbit must stay quiet on its own —
+  // healing is a genuinely re-circularized orbit, not a force-dependent hold.
+  it('ship-assist healing: heals titan out of the flapping zone, durably', () => {
+    // Control: flapping continues for the whole 600 tu window, including
+    // late (after t=300) — this is a real perpetual-klaxon zone, not a
+    // transient that dies down by itself.
     const control = new Sim(envelope)
-    const healed = new Sim(envelope)
-
     const ct = findBody(control.bodies, 'titan')!
     const cs = findBody(control.bodies, 'saturn')!
-    extract(ct, 'strip', 0.00005, cs.vel) // amendment 10: permanent flapping-klaxon zone
+    extract(ct, 'strip', 0.00005, cs.vel)
+    let controlEventsLate = 0
+    for (let t = 0; t < 600; t += 10) {
+      control.tick(10)
+      const n = control.drainEvents().filter(e => isBand(e) && e.body === 'titan').length
+      if (t + 10 > 300) controlEventsLate += n
+    }
+    expect(controlEventsLate).toBeGreaterThan(0)
 
+    // Healed: at t=100, station the ship (PD assist) and return the literal
+    // extracted mass via vis-viva accretion.
+    const healed = new Sim(envelope)
     const ht = findBody(healed.bodies, 'titan')!
     const hs = findBody(healed.bodies, 'saturn')!
     extract(ht, 'strip', 0.00005, hs.vel)
-
-    // Control: flapping (repeated band events) continues for the whole window.
-    let controlBandEvents = 0
-    for (let t = 0; t < 600; t += 10) {
-      control.tick(10)
-      controlBandEvents += control.drainEvents().filter(e => isBand(e) && e.body === 'titan').length
-    }
-    expect(controlBandEvents).toBeGreaterThan(0)
-
-    // Healed: run past the mid-cycle peak, scan for the natural low-deviation
-    // moment (titan passing back near rNom), heal there, then run to 600tu.
-    healed.tick(150)
+    healed.tick(100)
     healed.drainEvents()
-    let healAt = -1
-    let bestDev = Infinity
-    for (let t = 150; t < 350; t += 1) {
-      healed.tick(1)
-      healed.drainEvents()
-      const dev = deviationOf(ht, healed.bodies)
-      if (dev < bestDev) { bestDev = dev; healAt = t + 1 }
-    }
-    returnSlag(ht, 0.1, hs)
+    healed.setShipAssist('titan')
+    returnSlag(ht, 0.00005, hs)
 
-    let scoreHit100 = false
-    let bandEventsAfterHeal = 0
-    for (let t = healAt; t < 600; t += 10) {
+    let firstScore100At = -1
+    let bandEventsAfter100 = 0
+    for (let t = 100; t < 600; t += 10) {
       healed.tick(10)
-      bandEventsAfterHeal += healed.drainEvents().filter(e => isBand(e) && e.body === 'titan').length
-      if (scoreOf(ht, healed.bodies, envelope) === 100) scoreHit100 = true
+      const titanBand = healed.drainEvents().filter(e => isBand(e) && e.body === 'titan').length
+      // Events strictly after the sampled point where the score first read 100.
+      if (firstScore100At >= 0) bandEventsAfter100 += titanBand
+      if (firstScore100At < 0 && scoreOf(ht, healed.bodies, envelope) === 100) firstScore100At = t + 10
     }
-
-    // Comparative control: how many band events occur in the SAME
-    // post-heal-point window for the unhealed control (robust to the
-    // control's own natural cyclical score sometimes also touching 100 at
-    // a single sampled instant — a raw final-score snapshot comparison is
-    // NOT a reliable healed-vs-control signal for a periodic system, event
-    // counts over the matching window are).
-    const controlAfterHealPoint = new Sim(envelope)
-    {
-      const t2 = findBody(controlAfterHealPoint.bodies, 'titan')!
-      const s2 = findBody(controlAfterHealPoint.bodies, 'saturn')!
-      extract(t2, 'strip', 0.00005, s2.vel)
-    }
-    controlAfterHealPoint.tick(healAt)
-    controlAfterHealPoint.drainEvents()
-    controlAfterHealPoint.tick(600 - healAt)
-    const controlEventsSameWindow = controlAfterHealPoint.drainEvents()
-      .filter(e => isBand(e) && e.body === 'titan').length
-
+    const finalBand = healed.tracker.heldBand('titan')
     // eslint-disable-next-line no-console
-    console.log('healing measurement: healAt=', healAt, 'scoreHit100=', scoreHit100,
-      'bandEventsAfterHeal=', bandEventsAfterHeal,
-      'controlBandEventsInSameWindow=', controlEventsSameWindow)
+    console.log('healing: firstScore100At=', firstScore100At,
+      'bandEventsAfter100=', bandEventsAfter100, 'finalBand=', finalBand)
 
-    expect(scoreHit100).toBe(true)
-    expect(bandEventsAfterHeal).toBe(0)
-    // Sacred: healed ends strictly better than control AND flapping stops.
-    expect(bandEventsAfterHeal).toBeLessThan(controlEventsSameWindow)
+    expect(firstScore100At).toBeGreaterThan(100)
+    expect(bandEventsAfter100).toBe(0)
+    expect(finalBand).toBe('green')
+
+    // Durability: healing survives the ship leaving.
+    healed.setShipAssist(null)
+    healed.tick(50)
+    expect(healed.drainEvents()).toEqual([])
   })
 
-  // --- No-false-alarm requirement (amendment 8) ---------------------------
-
-  it('a counterweight fab parked well clear of titan never false-alarms it while healthy', () => {
-    // MEASURED FINDING: a mass-5 fab placed only ~10 units past titan's
-    // orbit (23 units from saturn) is close enough that its OWN real
-    // Newtonian gravity (not the gated assist — that part is verified
-    // zeroed for healthy bodies, see below) gravitationally captures into
-    // saturn within ~60tu and the resulting close-range slingshot ejects
-    // BOTH saturn and titan — a genuine physical consequence of parking a
-    // mass heavier than saturn itself (1.0) right next to it, unrelated to
-    // the envelope-gated assist mechanism this task adds. Offset >=25
-    // units keeps the fab's own gravity from ever capturing (verified
-    // clean — zero events of any kind — from 25 through 80 units); this
-    // test uses 25.
+  // --- Sacred proof 3: real-mass fab proximity is inert -------------------
+  //
+  // Amendment 11(a)/(e): fabs are cargo-built — the whole minable pool is
+  // ≈0.148, so a real fab weighs ≤~0.05. At that mass a fab parked right
+  // outside a moon's orbit is dynamically irrelevant: no capture chaos, no
+  // planet perturbation past envelope+margin, no false alarms — and the
+  // envelope-gated PD force is exactly zero for every healthy body by
+  // construction. (The moons themselves can NEVER feel fab gravity at all —
+  // cross-layer bodies are gravitationally invisible, amendment 1.)
+  //
+  // MEASURED FINDING (ganymede fab attrition — reported per this task's
+  // "try offset 8-12 before weakening anything" instruction): the titan
+  // fab (13+6 = 19 from saturn, 1.07 Hill radii) parks cleanly — zero
+  // events of ANY type through t=300, verified at offsets 6 through 15.
+  // The GANYMEDE fab cannot park at all: ganymede orbits at 20.5 from
+  // jupiter — OUTSIDE jupiter's Hill radius (13.9) — which only a moon can
+  // do (moons integrate in the tide-exempt layer-2 frame, amendment 1);
+  // any HELIO-layer body placed 6-15 units further out (1.9-2.6 r_H) is in
+  // jupiter's chaotic co-orbital annulus, where every init family tried
+  // (sun-circular, circular-retrograde DRO, quasi-satellite epicycle —
+  // wrong- and right-phased) is captured and swallowed by jupiter within
+  // 300 tu. That loss is a quiet gameplay setback (fabLost), NOT chaos:
+  // it perturbs nothing — zero band events, zero catastrophes, and the
+  // jupiter trio never notices. This test asserts exactly that measured
+  // reality: full inertness everywhere, titan-fab parking survives, and
+  // the ONLY event the run may produce is the ganymede fab's own silent
+  // fabLost. (Task 9 placement guidance: park counterweights at
+  // 0.3-1.2 r_H of the parent planet — the ganymede/io/europa assist fab
+  // belongs INSIDE jupiter's Hill sphere, where ASSIST_RANGE=40 still
+  // covers the whole trio.)
+  it('real-mass fab proximity is inert: no false alarms, no chaos, titan parking survives', () => {
     const sim = new Sim(envelope)
     const titan = findBody(sim.bodies, 'titan')!
     const saturn = findBody(sim.bodies, 'saturn')!
-    const radial = norm(sub(titan.pos, saturn.pos))
-    sim.addFab({ x: titan.pos.x + radial.x * 25, y: titan.pos.y + radial.y * 25 }, 5)
-    sim.tick(200)
-    const events = sim.drainEvents()
-    // eslint-disable-next-line no-console
-    console.log('titan-proximity fab events:', events)
-    expect(events.filter(isBand).length).toBe(0)
-    expect(events.filter(isCatastrophe).length).toBe(0)
-  })
+    const tRadial = norm(sub(titan.pos, saturn.pos))
+    const titanFab = sim.addFab({ x: titan.pos.x + tRadial.x * 6, y: titan.pos.y + tRadial.y * 6 }, 0.05)
 
-  it('a counterweight fab parked near jupiter\'s moon trio never false-alarms the SIBLING MOONS', () => {
-    // MEASURED FINDING: amendment 8's literal no-false-alarm requirement is
-    // scoped to SIBLING MOONS ("a massive assist fab parked near a moon
-    // must not push SIBLING moons past envelope+margin via its real
-    // gravity"). A mass-5 fab anywhere near jupiter (offset 10 through 80
-    // units tried) DOES perturb JUPITER ITSELF (and, rippling outward,
-    // mars) via ordinary real N-body gravity in the heliocentric layer —
-    // expected and unavoidable: jupiter is deliberately light (mass 1.5,
-    // amendment 3) for null-test stability, so ANY added mass-5 body
-    // anywhere in its neighborhood forces it beyond its own (very tight,
-    // sub-2%) envelope. This is real gravity, not the designed assist
-    // force (which is verified gated to zero for healthy bodies — see the
-    // titan test above and the sim.ts envelope gate itself), so it is out
-    // of scope for what an assist-force gate can or should prevent. Across
-    // every offset/mass tried, io/europa/ganymede themselves NEVER band-
-    // or catastrophe-event — this test asserts precisely that documented
-    // scope.
-    const sim = new Sim(envelope)
     const ganymede = findBody(sim.bodies, 'ganymede')!
     const jupiter = findBody(sim.bodies, 'jupiter')!
-    const radial = norm(sub(ganymede.pos, jupiter.pos))
-    sim.addFab({ x: ganymede.pos.x + radial.x * 10, y: ganymede.pos.y + radial.y * 10 }, 5)
-    sim.tick(200)
+    const gRadial = norm(sub(ganymede.pos, jupiter.pos))
+    const ganymedeFab = sim.addFab({ x: ganymede.pos.x + gRadial.x * 6, y: ganymede.pos.y + gRadial.y * 6 }, 0.05)
+
+    sim.tick(300)
     const events = sim.drainEvents()
-    const trio = new Set(['io', 'europa', 'ganymede'])
     // eslint-disable-next-line no-console
-    console.log('jupiter-trio-proximity fab events:', events, 'fabLost:', events.filter(isFabLost))
-    expect(events.filter(e => isBand(e) && trio.has(e.body)).length).toBe(0)
-    expect(events.filter(e => isCatastrophe(e) && trio.has(e.body)).length).toBe(0)
-    // Zero catastrophes system-wide holds too (verified across every offset
-    // tried, even though band events on jupiter/mars do not).
-    expect(events.filter(isCatastrophe).length).toBe(0)
+    console.log('proximity events:', events)
+    expect(events.filter(isBand)).toEqual([])
+    expect(events.filter(isCatastrophe)).toEqual([])
+    // Titan-side parking is stable — that fab must survive untouched.
+    expect(events.filter(e => isFabLost(e) && e.fab === titanFab.name)).toEqual([])
+    // Only permissible event: the ganymede fab's own silent loss (see the
+    // measured-finding comment above — it orbits outside jupiter's Hill
+    // radius, unreachable parking for any helio-layer body).
+    expect(events.filter(e => !(isFabLost(e) && e.fab === ganymedeFab.name))).toEqual([])
   })
 })

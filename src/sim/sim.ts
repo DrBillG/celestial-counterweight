@@ -10,7 +10,10 @@ import {
   type BandEvent,
 } from './stability'
 import { dist, norm, sub, v, type Vec } from './vec'
-import { DT, RUNAWAY_ACCEL, EJECT_RADIUS, ASSIST_K, ASSIST_RANGE, ENV_MARGIN } from '../constants'
+import {
+  G, DT, RUNAWAY_ACCEL, EJECT_RADIUS, ASSIST_K, ASSIST_MAX, ASSIST_RANGE, ENV_MARGIN,
+  SHIP_ASSIST, DAMP_RATIO,
+} from '../constants'
 
 export type SimEvent =
   | ({ type: 'band' } & BandEvent)
@@ -56,6 +59,35 @@ export class Sim {
   // ARE safe under the contract.
   private fabMasses = new Map<string, number>()
 
+  // PD-controller snapshots (amendment 11(b), same sanctioned pattern as
+  // fabMasses): the damping term needs a deviation RATE, but the ExtraAccel
+  // contract forbids velocity reads. So once per tick() — OUTSIDE the
+  // integrator callback — we snapshot each tracked body's signed radial
+  // deviation s = (dist(body,parent) − rNom)/rNom and derive its
+  // finite-difference rate sDot = (s − sPrev)/elapsed, where `elapsed` is
+  // the SIM TIME actually advanced by the previous tick() call (steps·DT —
+  // robust to variable tick sizes). Edge cases: on the very first tick
+  // sDot = 0 (no history); a tick(0) call advances no time, so the next
+  // tick sees elapsed = 0 and keeps the previous sDot (positions are
+  // unchanged — the last measured rate is still the best estimate).
+  // Staleness (up to one tick interval) is fine: deviation dynamics evolve
+  // on epicyclic timescales (~hundreds of tu), far slower than game ticks.
+  private prevS = new Map<string, number>()
+  private sDots = new Map<string, number>()
+  private simTime = 0
+  private lastSnapshotTime = 0
+
+  // Ship-assist target (amendment 11(c)): while set, the named body's PD
+  // gain K gains a direct SHIP_ASSIST contribution — the ship stationed at
+  // a body actively station-keeps it. Task 9 sets this during Return Slag
+  // stationing (the ship does the ORBITAL healing; the returned slag mass
+  // does the budget/coupling healing) and clears it when the ship leaves.
+  private shipAssistTarget: string | null = null
+
+  setShipAssist(bodyName: string | null): void {
+    this.shipAssistTarget = bodyName
+  }
+
   harmony(): number {
     return harmonyOf(this.bodies, this.envelope)
   }
@@ -66,28 +98,123 @@ export class Sim {
     return e
   }
 
-  // Fabs orbit the sun in a circular orbit at r = |pos|, placed on the SAME
-  // bodies array the tracker already holds a reference to — we must NOT
-  // construct a new StabilityTracker here (amendment 7: that would discard
-  // every other body's held instant-worsen/slow-recover alarm state).
-  // Fabs themselves are never score-tracked (StabilityTracker.tracked()
-  // excludes kind 'fab'), so there is no track() call to make for the fab
-  // itself either.
+  // Fabs are placed in a circular orbit around the LOCAL dominant attractor
+  // (amendment 11 follow-up). The original Task 7 sun-circular-everywhere
+  // init made every counterweight placement near a planet a death
+  // sentence: near a moon's orbit the sun-circular velocity is nearly
+  // IDENTICAL to the planet's, i.e. near-zero relative velocity deep in
+  // the planet's gravity well — a radial free-fall into the planet within
+  // ~40–150 tu (measured for both saturn and jupiter placements;
+  // mass-independent, so no assist tuning could ever compensate).
+  //
+  // Criterion: if the sun-circular candidate velocity would leave the fab
+  // gravitationally BOUND to a planet (negative two-body energy
+  // ½|v_rel|² − G·m/d < 0), that is a capture-and-crash trajectory, so
+  // the fab instead parks in a circular RETROGRADE orbit around that
+  // planet (the most-bound one). Retrograde because counterweights get
+  // stationed at moon-orbit radii, 0.7–1.9 Hill radii, where PROGRADE
+  // circular orbits are chaotic (stability limit ≈ 0.5 r_H — measured
+  // here too: a prograde fab at 13.6 from saturn pumped to e≈0.5 and
+  // wandered off within ~150 tu, aborting the rescue) while the
+  // distant-retrograde family (DROs — real astrodynamics) is stable well
+  // beyond the Hill radius. Measured: retrograde fabs hold station for
+  // the whole rescue window. A binding-energy gate (not a Hill-radius
+  // gate) is what makes amendment 11(e)'s "fab placement near planets is
+  // safe at real masses" actually true, and what Task 9's counterweight
+  // stationing builds on.
+  //
+  // Placed on the SAME bodies array the tracker already holds a reference
+  // to — we must NOT construct a new StabilityTracker here (amendment 7:
+  // that would discard every other body's held instant-worsen/slow-recover
+  // alarm state). Fabs themselves are never score-tracked
+  // (StabilityTracker.tracked() excludes kind 'fab'), so there is no
+  // track() call to make for the fab itself either.
   addFab(pos: Vec, mass: number): Body {
     const sun = findBody(this.bodies, 'sun')!
-    const r = dist(pos, sun.pos)
-    const vCirc = circularSpeed(sun.mass, r)
-    const radial = norm(sub(pos, sun.pos))
-    const tangent = v(-radial.y, radial.x)
+    const rSun = dist(pos, sun.pos)
+    const sunRadial = norm(sub(pos, sun.pos))
+    const vSun = circularSpeed(sun.mass, rSun)
+    const cand = v(
+      sun.vel.x - sunRadial.y * vSun,
+      sun.vel.y + sunRadial.x * vSun,
+    )
+
+    let primary = sun
+    let bestEps = 0
+    for (const p of this.bodies) {
+      if (p.kind !== 'planet' || this.dead.has(p.name)) continue
+      const d = dist(pos, p.pos)
+      const eps = d === 0
+        ? -Infinity // degenerate: placed exactly on the planet
+        : 0.5 * ((cand.x - p.vel.x) ** 2 + (cand.y - p.vel.y) ** 2) - (G * p.mass) / d
+      if (eps < bestEps) {
+        bestEps = eps
+        primary = p
+      }
+    }
+
+    let vel: Vec
+    let r: number
+    if (primary === sun) {
+      vel = cand
+      r = rSun
+    } else {
+      r = dist(pos, primary.pos)
+      // Two retrograde branches split at the planet's Hill radius: inside,
+      // the bound circular-retrograde (DRO) orbit at sqrt(G·m/r) — the only
+      // stable family at moon-orbit radii (PROGRADE circular orbits are
+      // chaotic beyond ≈0.5·r_H: measured, a prograde fab at 13.6 from
+      // saturn pumped to e≈0.5 and wandered off within ~150 tu, aborting
+      // the rescue). Outside, the QUASI-SATELLITE loop — the guiding-center
+      // epicyclic solution, a 2:1 retrograde ellipse around the planet
+      // (naive circular-retrograde init out there crashes into the planet
+      // within 300 tu; measured). In the planet's local orbital frame
+      // (x̂ = sun→planet radial, ŷ = prograde tangential) the epicyclic
+      // ellipse through local offset (x_r, y_r) has INERTIAL relative
+      // velocity
+      //   (−n·y_r/2, −n·x_r)
+      // (rotating-frame epicycle rate (−A·n·sinφ, −2·A·n·cosφ) PLUS the
+      // frame term Ω×offset — dropping the frame term, i.e. using the
+      // rotating-frame numbers directly, doubles the eccentricity and was
+      // measured to send a saturn-stationed fab onto a jupiter-crossing
+      // sun orbit).
+      const aP = dist(primary.pos, sun.pos)
+      const nP = circularSpeed(sun.mass, aP) / aP // planet mean motion
+      const hill = aP * Math.cbrt(primary.mass / (3 * sun.mass))
+      const rel = sub(pos, primary.pos)
+      // Boundary 1.25·r_H is measured: circular-retrograde holds station up
+      // to ~1.2·r_H and crashes by ~1.3·r_H; the QS approximation (which
+      // neglects the planet's own gravity) is only valid from ~1.3·r_H out.
+      if (r < 1.25 * hill) {
+        // Bound branch: circular retrograde around the planet.
+        const vCirc = circularSpeed(primary.mass, r)
+        const radial = norm(rel)
+        const tangent = v(radial.y, -radial.x) // retrograde — see doc comment
+        vel = v(primary.vel.x + tangent.x * vCirc, primary.vel.y + tangent.y * vCirc)
+      } else {
+        // Quasi-satellite branch.
+        const xHat = norm(sub(primary.pos, sun.pos))
+        const yHat = v(-xHat.y, xHat.x)
+        const xR = rel.x * xHat.x + rel.y * xHat.y
+        const yR = rel.x * yHat.x + rel.y * yHat.y
+        const vx = (-nP * yR) / 2 // local radial component
+        const vy = -nP * xR       // local tangential component
+        vel = v(
+          primary.vel.x + xHat.x * vx + yHat.x * vy,
+          primary.vel.y + xHat.y * vx + yHat.y * vy,
+        )
+      }
+    }
+
     const name = `fab-${this.bodies.filter(b => b.kind === 'fab').length + 1}`
     const fab = makeBody({
       name,
       kind: 'fab',
       mass,
       pos: { ...pos },
-      vel: { x: sun.vel.x + tangent.x * vCirc, y: sun.vel.y + tangent.y * vCirc },
+      vel,
       radius: 1.2,
-      parentName: 'sun',
+      parentName: primary.name,
       rNom: r,
     })
     this.bodies.push(fab)
@@ -121,34 +248,53 @@ export class Sim {
       ay += radial.y * mag
     }
 
-    // 2. Station-keeping assist: every fab within ASSIST_RANGE of this body
-    // pulls it back toward its own nominal radius. Uses the fab-mass
-    // SNAPSHOT taken at the top of tick(), never fab.mass directly (that
-    // read would violate the position/state-only ExtraAccel contract).
+    // 2. Station-keeping assist — PD controller (amendment 11(b), replaces
+    // the Task 8 constant-magnitude force whose arrest-or-overshoot knife
+    // edge the runaway turned into ejections). Radial acceleration
+    //   a = −(Kp·s + Kd·sDot)   along the outward radial unit vector,
+    // where s = (d − rNom)/rNom is the LIVE signed deviation (position-
+    // derived — allowed), sDot is the per-tick finite-difference snapshot
+    // (see prevS/sDots above — no velocity reads), Kp = K, and
+    //   Kd = DAMP_RATIO·sqrt(Kp·rNom).
+    // Stability reasoning: in radial displacement x = s·rNom the closed
+    // loop is x¨ ≈ −(Kp/rNom)·x − (Kd/rNom)·x˙ (+ the body's own epicyclic
+    // restoring, + runaway anti-restoring while critical), i.e. stiffness
+    // k = Kp/rNom and damping c = Kd/rNom = DAMP_RATIO·sqrt(k) — a damping
+    // ratio of ζ = DAMP_RATIO/2, critically damped at DAMP_RATIO = 2, so
+    // the approach to rNom is non-oscillatory by construction instead of
+    // knife-edge tuned. The gain K = Σ live fabs in range ASSIST_K·m/d²
+    // (mass SNAPSHOT, never fab.mass) + SHIP_ASSIST while the ship is
+    // stationed here.
     //
-    // Envelope-gated (amendment 8 no-false-alarm requirement): a constant-
-    // magnitude restoring force applied unconditionally would perturb a
-    // HEALTHY body too (it can reach ~30% of a small moon's central accel
-    // at close range) and could false-alarm siblings of a body being
-    // rescued. So the assist only switches on once b has actually drifted
-    // beyond its own pristine envelope (+ margin) — deviationOf and the
-    // envelope are both position-derived quantities, so this stays within
-    // the ExtraAccel contract (amendment 2: no vel/mass reads). A healthy
-    // body (dev <= envelope+margin) feels exactly zero assist force by
-    // construction, no matter how close or massive a fab parks nearby.
+    // Envelope-gated (amendment 8 no-false-alarm requirement): the force
+    // only switches on once b has drifted beyond its own pristine envelope
+    // (+ margin) — a healthy body feels exactly zero assist force by
+    // construction, no matter how close a fab parks (so the machinery
+    // cannot change any pristine trajectory). deviationOf and the envelope
+    // are position-derived, so the gate stays within the ExtraAccel
+    // contract (amendment 2: no vel/mass reads).
     const dev = deviationOf(b, this.bodies)
     const envLimit = (this.envelope[b.name] ?? 0) + ENV_MARGIN
-    if (dev > envLimit) {
+    if (dev > envLimit && b.rNom > 0 && !this.dead.has(b.name)) {
+      let K = this.shipAssistTarget === b.name ? SHIP_ASSIST : 0
       for (const fab of this.bodies) {
         if (fab.kind !== 'fab' || fab === b) continue
         const fabMass = this.fabMasses.get(fab.name)
         if (fabMass === undefined) continue
         const fd = dist(fab.pos, b.pos)
         if (fd === 0 || fd > ASSIST_RANGE) continue
-        const restore = (ASSIST_K * fabMass) / (fd * fd)
-        const sign = d >= b.rNom ? -1 : 1 // pull back toward nominal radius
-        ax += radial.x * restore * sign
-        ay += radial.y * restore * sign
+        K += (ASSIST_K * fabMass) / (fd * fd)
+      }
+      // Saturate: see the ASSIST_MAX comment in constants.ts — bounds the
+      // conjunction-phase gain so ASSIST_K can be sized for the far phase.
+      K = Math.min(K, ASSIST_MAX)
+      if (K > 0) {
+        const s = (d - b.rNom) / b.rNom
+        const sDot = this.sDots.get(b.name) ?? 0
+        const kd = DAMP_RATIO * Math.sqrt(K * b.rNom)
+        const mag = -(K * s + kd * sDot)
+        ax += radial.x * mag
+        ay += radial.y * mag
       }
     }
 
@@ -164,10 +310,31 @@ export class Sim {
     // evaluations) within this tick.
     this.fabMasses.clear()
     for (const b of this.bodies) {
-      if (b.kind === 'fab') this.fabMasses.set(b.name, b.mass)
+      // Dead fabs (collided/ejected/sundived) no longer assist anyone.
+      if (b.kind === 'fab' && !this.dead.has(b.name)) this.fabMasses.set(b.name, b.mass)
     }
 
+    // PD snapshot (see prevS/sDots doc comment): signed deviation s and its
+    // finite-difference rate for every assistable body, once per tick(),
+    // outside the integrator callback.
+    const elapsed = this.simTime - this.lastSnapshotTime
+    for (const b of this.bodies) {
+      if (!b.parentName || b.kind === 'ship' || b.kind === 'fab' || b.rNom === 0) continue
+      const parent = findBody(this.bodies, b.parentName)
+      if (!parent) continue
+      const s = (dist(b.pos, parent.pos) - b.rNom) / b.rNom
+      const sPrev = this.prevS.get(b.name)
+      if (sPrev !== undefined && elapsed > 0) {
+        this.sDots.set(b.name, (s - sPrev) / elapsed)
+      } else if (!this.sDots.has(b.name)) {
+        this.sDots.set(b.name, 0) // first tick: no rate history yet
+      }
+      this.prevS.set(b.name, s)
+    }
+    this.lastSnapshotTime = this.simTime
+
     const steps = Math.ceil(tu / DT)
+    this.simTime += steps * DT
     for (let i = 0; i < steps; i++) {
       stepHierarchical(this.bodies, DT, this.extraAccel)
       for (const ev of this.tracker.update(this.bodies)) {
