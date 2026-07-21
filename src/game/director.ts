@@ -20,6 +20,7 @@ import { Sim, type SimEvent } from '../sim/sim'
 import type { Body } from '../sim/body'
 import { findBody } from '../sim/data'
 import { circularSpeed } from '../sim/integrator'
+import { bandOf } from '../sim/stability'
 import { extract, returnSlag } from '../sim/mining'
 import { dist, norm, sub, v, type Vec } from '../sim/vec'
 import {
@@ -35,6 +36,7 @@ export type BodyRisk = 'standard' | 'fragile' | 'trophy'
 export type DirectorEvent =
   | { type: 'placementRejected' }
   | { type: 'extractionFloor'; body: string }
+  | { type: 'riskWarning'; body: string; risk: 'fragile' }
 export type GameEvent = SimEvent | DirectorEvent
 
 // Construction anchor: where sphere segments are assembled — a spot on a
@@ -87,12 +89,18 @@ export class Director {
     return this.target
   }
 
-  // Risk tag for the HUD/mining UI. phobos: ~40× more dose-fragile than
-  // titan AND effectively unrescuable — mars-bound fabs are rejected by the
-  // mass-ratio guard (amendment 12(d)). The jupiter trio is near-massless
-  // (amendment 3): negligible cargo, trophy targets only.
+  // Risk tag for the HUD/mining UI.
+  //  - phobos: ~40× more dose-fragile than titan AND effectively unrescuable
+  //    (mars-bound fabs are rejected by the mass-ratio guard, amendment 12(d)).
+  //  - mars: the biggest fairness trap in the build — it holds 73% of the
+  //    nominal minable pool, but mining it in ANY mode fatally destabilizes
+  //    phobos, and mars is a fab-exclusion zone (amendment 12(a)) so no
+  //    counterweight can save phobos. Telegraphed 'fragile' so the HUD can
+  //    warn before a player wastes a run on the poisoned pool.
+  //  - jupiter trio: near-massless (amendment 3), negligible cargo — trophy
+  //    targets only.
   bodyRisk(name: string): BodyRisk {
-    if (name === 'phobos') return 'fragile'
+    if (name === 'phobos' || name === 'mars') return 'fragile'
     if (name === 'io' || name === 'europa' || name === 'ganymede') return 'trophy'
     return 'standard'
   }
@@ -113,6 +121,11 @@ export class Director {
       throw new Error(`selectTarget: unknown target '${name}'`)
     }
     this.target = name
+    // Telegraph the fairness traps (mars/phobos) the moment they're picked —
+    // the HUD (Task 14) surfaces this before the player commits a transit.
+    if (name !== 'fab' && this.bodyRisk(name) === 'fragile') {
+      this.pending.push({ type: 'riskWarning', body: name, risk: 'fragile' })
+    }
   }
 
   launch(): void {
@@ -143,6 +156,12 @@ export class Director {
     // Amendment 11(c): Return Slag stations the ship — its PD assist does
     // the orbital healing while the returned mass heals the budget. The
     // assist stays on after the cargo runs out (stationed) until launch().
+    //
+    // chooseExtraction('slag') with cargo === 0 is an INTENTIONAL move, not a
+    // no-op edge case: it engages ship-assist and holds the body at its
+    // envelope while no mass flows — "station and hold this orbit while I go
+    // fetch a counterweight fab". The PD hold buys time; the mass (when a
+    // later slag run brings some) does the durable budget/coupling healing.
     if (mode === 'slag') this.sim.setShipAssist(this.target)
   }
 
@@ -232,11 +251,15 @@ export class Director {
       return
     }
 
-    // strip / lattice. Husk guard (amendment 9): refuse the whole dose when
-    // it would take the body below EXTRACTION_FLOOR·m0; auto-stop the mode
-    // so the event fires once per (re)selection.
-    const dm = RATE[this.mode as 'strip' | 'lattice'] * dt
-    if (body.mass - dm < EXTRACTION_FLOOR * body.m0) {
+    // strip / lattice. Husk guard (amendment 9): mine the PARTIAL dose down
+    // to EXACTLY the floor rather than refusing the whole dose — this leaves
+    // no stranded mass and makes a single big-dt advance reach the same
+    // floor as many small-dt advances (big/small-dt equivalence, helps
+    // Task 10 bots). Only when there is zero headroom left do we refuse and
+    // auto-stop the mode (extractionFloor fires once per (re)selection).
+    const floor = EXTRACTION_FLOOR * body.m0
+    const dm = Math.min(RATE[this.mode as 'strip' | 'lattice'] * dt, body.mass - floor)
+    if (dm <= 0) {
       this.mode = null
       this.pending.push({ type: 'extractionFloor', body: body.name })
       return
@@ -312,7 +335,10 @@ export class Director {
         best = b
       }
     }
-    if (!best) return null
+    // All-green fallback: if nothing is wobbling (every candidate at a green
+    // heldScore) there is no body worth counterweighting — park the segment
+    // in the sun annulus (via placeFar) rather than crowding a calm planet.
+    if (!best || bandOf(bestScore) === 'green') return null
     const parent = findBody(this.sim.bodies, best.parentName!)!
     const radial = norm(sub(best.pos, parent.pos))
     if (best.kind === 'moon') {

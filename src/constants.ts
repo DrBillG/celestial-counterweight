@@ -72,10 +72,17 @@ export const FAB_MASS_RATIO_MAX = 0.05 // TUNE
 // capture, collide, and doom the rescue.
 export const FAB_MIN_SEPARATION = 8    // TUNE
 
-// Dyson sphere (retuned in Task 9 per amendments 11(e)/12(d): the whole
-// minable pool is ≈0.148 above the extraction floors — the old value of 12
-// was unwinnable by ~two orders of magnitude. Task 10 finalizes.)
-export const SPHERE_MASS_REQUIRED = 0.10 // TUNE: total delivered mass to win
+// Dyson sphere win target. HONEST pool math (Task 9 quality review):
+// nominal minable m0 pool ≈ 0.1505, BUT mars (0.1045 — 73% of the pool) is
+// POISONED: mining it in any mode fatally destabilizes its moon phobos, and
+// phobos is unrescuable (mars is a fab-exclusion zone, amendment 12a — no
+// counterweight can hold it). Honestly-accessible pool = titan 0.0219 +
+// moon 0.0114 + jupiter trio 0.0014 ≈ 0.035 usable AFTER the extraction
+// floors. 0.015 requires ~45% harvest of the safe pool: skilled-but-
+// achievable with counterweight rescue, losable if greedy.
+// PROVISIONAL — Task 10 must measure the real achievable-under-best-play
+// pool and set the final value to ~55–65% of it, within [0.010, 0.025].
+export const SPHERE_MASS_REQUIRED = 0.015 // TUNE: total delivered mass to win
 
 // Director (Task 9)
 export const SIM_RATE = 1              // TUNE: sim tu advanced per real-time unit passed to Director.advance
