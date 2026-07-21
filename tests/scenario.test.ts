@@ -247,8 +247,12 @@ describe('Scenario bots (Task 10): winnable · losable · honest', () => {
     const efficient = runEfficient(new Director(envelope))
     expect(greedy.state).toBe('lost')
     expect(efficient.state).toBe('won')
-    // The core design goal: the back-off + counterweight strategy out-banks
-    // the reckless one's best moment before it dies.
+    // The core design goal, as an EXISTENCE proof: there exists a careful
+    // strategy that wins and a reckless one that loses, on the identical
+    // system. (This is not a universal claim that every reckless strategy
+    // loses — the greedy bot here is one relentless-single-body-strip line;
+    // it dies fast at t~87. Stronger honesty guarantees would need a family
+    // of adversarial greedy variants.)
     expect(efficient.progress).toBeGreaterThan(greedy.peakProgress)
     // eslint-disable-next-line no-console
     console.log(`  honesty: efficient ${efficient.progress.toFixed(1)}% > greedy peak ${greedy.peakProgress.toFixed(1)}%`)

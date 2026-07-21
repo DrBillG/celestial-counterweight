@@ -96,12 +96,13 @@ export const FAB_MIN_SEPARATION = 8    // TUNE
 // pool is titan + moon ≈ 0.033 held by counterweights.
 //
 // MEASURED (Task 10 scenario bots, tests/scenario.test.ts): the efficient
-// mine-to-amber → counterweight bot's achievable delivered pool under
-// sustained best play is ≈0.021 (titan-led, counterweight-held; the last
-// harvest rounds hit diminishing mass-per-round as orbits deepen, and
-// pushing all the way to the floor eventually loses a body). Final win
-// target = 0.012, ≈57% of 0.021 — inside the amendment-13a [0.010, 0.025]
-// range and firmly in the skilled-but-comfortable band: the reference bot
+// mine-to-amber → counterweight bot DELIVERS ≥0.0149 and wins (it stops at
+// the win, so the test proves a floor, not the ceiling). Raw headroom above
+// the floors is titan 0.0219 + moon 0.0114 ≈ 0.033; sustained best play is
+// estimated ≈0.021 deliverable before diminishing per-round mass and
+// eventual body-loss cap it (ESTIMATE — not pinned by a committed test).
+// Final win target = 0.012 sits below the proven-deliverable 0.0149, inside
+// amendment-13a [0.010, 0.025], skilled-but-comfortable: the reference bot
 // wins in ≈7 rounds with ~75% of the run to spare, while the greedy strip
 // bot loses long before banking a third of it.
 export const SPHERE_MASS_REQUIRED = 0.012 // TUNE: total delivered mass to win
