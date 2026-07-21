@@ -348,7 +348,9 @@ export class Sim {
     if (dev > envLimit && b.rNom > 0 && !this.dead.has(b.name)) {
       let K = this.shipAssistTarget === b.name ? SHIP_ASSIST : 0
       for (const fab of this.bodies) {
-        if (fab.kind !== 'fab' || fab === b) continue
+        // dead check is live (dead set updates per substep) — a fab that dies
+        // mid-tick must stop assisting immediately, or large ticks ghost-assist
+        if (fab.kind !== 'fab' || fab === b || this.dead.has(fab.name)) continue
         const fabMass = this.fabMasses.get(fab.name)
         if (fabMass === undefined) continue
         const fd = dist(fab.pos, b.pos)
