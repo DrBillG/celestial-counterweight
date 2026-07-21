@@ -6,6 +6,7 @@ import { CameraDirector } from './render/cameraDirector'
 import { BridgeFrame } from './render/bridge'
 import { Director } from './game/director'
 import { Hud } from './ui/hud'
+import { GameAudio } from './audio/audio'
 
 const app = document.getElementById('app')!
 const hud = document.getElementById('hud')!
@@ -31,6 +32,13 @@ if (!webglAvailable()) {
   // bridge alarm edge-glow (passed in), so main never toggles setAlarm itself.
   const hudUi = new Hud(hud, bridgeFrame)
   hudUi.bindClicks(hud)
+
+  // Synthesized audio + gamepad haptics (Task 15). Pure event-stream consumer:
+  // unlocked on the first user gesture (below), then fed the SAME drained event
+  // array the HUD gets, each frame. `started` gates the run-start chime to the
+  // very first unlock.
+  const audio = new GameAudio()
+  let audioStarted = false
   hudUi.onChoice = (id) => {
     switch (id) {
       case 'launch': director.launch(); break
@@ -50,6 +58,13 @@ if (!webglAvailable()) {
   // handler; a stray click that hits a body still selects it (harmless).
   const raycaster = new THREE.Raycaster()
   addEventListener('click', (e) => {
+    // First user gesture unlocks/resumes audio (browsers require it). On the
+    // very first unlock, play the run-start Compressorator chime once.
+    audio.unlock()
+    if (!audioStarted) {
+      audioStarted = true
+      audio.compressoratorChime()
+    }
     // Ignore clicks that landed on an interactive HUD element — those are
     // player-action buttons, not orrery target picks.
     if ((e.target as HTMLElement).closest('.clickable')) return
@@ -71,7 +86,7 @@ if (!webglAvailable()) {
   // 'mining' on titan) and observe the cinematic dive. Never present in the
   // default (no-param) path, so there is no debug residue in production.
   if (demo) {
-    ;(window as unknown as { __cc: unknown }).__cc = { director, cameraDirector }
+    ;(window as unknown as { __cc: unknown }).__cc = { director, cameraDirector, audio }
   }
 
   let last = performance.now()
@@ -87,6 +102,9 @@ if (!webglAvailable()) {
     const events = director.drainEvents()
     // HUD owns the bridge alarm internally (via events + red/critical tracking).
     hudUi.update(director, events)
+    // Audio reacts to the SAME drained event array (no second drainEvents() —
+    // that would clear the queue and starve the HUD).
+    audio.react(events)
     // Camera dive is driven AFTER director.advance so it reads the current
     // state (mining/constructing) this frame, not last frame's.
     cameraDirector.update(dt)
