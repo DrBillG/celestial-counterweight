@@ -21,10 +21,17 @@ export const HELD_RECOVERY_PER_TU = 0.25  // TUNE: held-score recovery rate; gen
 export const RUNAWAY_ACCEL = 0.004     // TUNE: designed instability past critical
 export const EJECT_RADIUS = 600        // beyond this from sun = ejected (lose event)
 
-// Mining (Task 5)
+// Mining (Task 5; rates retuned in Task 9 per amendment 10 — the original
+// strip 0.010/tu extracted ≈43% of titan's m0 per tu, ~100× the measured
+// fatal single-dose threshold. These rates make mining gradual pressure
+// instead of instant catastrophe; Task 10 finalizes per-body.)
 export const EJECTA_SPEED = 2.0
 export const ASYM = { strip: 0.8, lattice: 0.05 } as const
-export const RATE = { strip: 0.010, lattice: 0.003 } as const  // mass units per tu
+export const RATE = { strip: 0.0002, lattice: 0.00005 } as const  // TUNE: mass units per tu
+export const RATE_SLAG = 0.0002        // TUNE: mass/tu returned to a body during slag mode
+// Director-side husk guard (amendment 9): refuse to mine a body below this
+// fraction of its m0 — exhausted husks become unbounded-Δv noisemakers.
+export const EXTRACTION_FLOOR = 0.05   // TUNE
 
 // Rebalance (Task 8, amendment 11: PD controller at REAL fab masses)
 // The assist is a PD controller (see Sim.extraAccel). Per-body total gain
@@ -65,5 +72,13 @@ export const FAB_MASS_RATIO_MAX = 0.05 // TUNE
 // capture, collide, and doom the rescue.
 export const FAB_MIN_SEPARATION = 8    // TUNE
 
-// Dyson sphere (Task 11)
-export const SPHERE_MASS_REQUIRED = 12 // TUNE: total delivered mass to win
+// Dyson sphere (retuned in Task 9 per amendments 11(e)/12(d): the whole
+// minable pool is ≈0.148 above the extraction floors — the old value of 12
+// was unwinnable by ~two orders of magnitude. Task 10 finalizes.)
+export const SPHERE_MASS_REQUIRED = 0.10 // TUNE: total delivered mass to win
+
+// Director (Task 9)
+export const SIM_RATE = 1              // TUNE: sim tu advanced per real-time unit passed to Director.advance
+export const TRAVEL_SPEED = 25         // TUNE: ship transit speed (distance units per tu)
+export const SLINGSHOT_BONUS = 0.35    // TUNE: one burn() per transit cuts the remaining time by this fraction
+export const DECISION_WINDOW = 8       // TUNE: tu to decide at the construction site before auto-placement
