@@ -29,7 +29,7 @@ if (!webglAvailable()) {
   // Dev aid: `?demo` advances the sim even when the tab is hidden, so the live
   // orrery (orbital motion + growing stability-colored trails) can be verified
   // in an automated/background preview. Default (no param) still pauses on hide.
-  const demo = location.search.includes('demo')
+  const demo = new URLSearchParams(location.search).has('demo')
 
   let last = performance.now()
   const frame = (t: number) => {
