@@ -27,7 +27,7 @@ export const ASYM = { strip: 0.8, lattice: 0.05 } as const
 export const RATE = { strip: 0.010, lattice: 0.003 } as const  // mass units per tu
 
 // Rebalance (Task 8)
-export const ASSIST_K = 0.02           // TUNE: station-keeping strength per fab mass
+export const ASSIST_K = 0.1            // TUNE: raised ×5 so a mass≈5 fab at close range out-pulls early-critical runaway; Task 8 proves efficacy
 export const ASSIST_RANGE = 40
 
 // Dyson sphere (Task 11)
