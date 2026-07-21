@@ -64,7 +64,7 @@ describe('mining', () => {
     const saturn = findBody(bodies, 'saturn')!
     extract(titan, 'strip', 0.002, saturn.vel)
     const m = titan.mass
-    returnSlag(titan, 0.001)
+    returnSlag(titan, 0.001, saturn)
     expect(titan.mass).toBeCloseTo(m + 0.001, 10)
   })
 

@@ -10,7 +10,7 @@ import {
   type BandEvent,
 } from './stability'
 import { dist, norm, sub, v, type Vec } from './vec'
-import { DT, RUNAWAY_ACCEL, EJECT_RADIUS, ASSIST_K, ASSIST_RANGE } from '../constants'
+import { DT, RUNAWAY_ACCEL, EJECT_RADIUS, ASSIST_K, ASSIST_RANGE, ENV_MARGIN } from '../constants'
 
 export type SimEvent =
   | ({ type: 'band' } & BandEvent)
@@ -125,16 +125,31 @@ export class Sim {
     // pulls it back toward its own nominal radius. Uses the fab-mass
     // SNAPSHOT taken at the top of tick(), never fab.mass directly (that
     // read would violate the position/state-only ExtraAccel contract).
-    for (const fab of this.bodies) {
-      if (fab.kind !== 'fab' || fab === b) continue
-      const fabMass = this.fabMasses.get(fab.name)
-      if (fabMass === undefined) continue
-      const fd = dist(fab.pos, b.pos)
-      if (fd === 0 || fd > ASSIST_RANGE) continue
-      const restore = (ASSIST_K * fabMass) / (fd * fd)
-      const sign = d >= b.rNom ? -1 : 1 // pull back toward nominal radius
-      ax += radial.x * restore * sign
-      ay += radial.y * restore * sign
+    //
+    // Envelope-gated (amendment 8 no-false-alarm requirement): a constant-
+    // magnitude restoring force applied unconditionally would perturb a
+    // HEALTHY body too (it can reach ~30% of a small moon's central accel
+    // at close range) and could false-alarm siblings of a body being
+    // rescued. So the assist only switches on once b has actually drifted
+    // beyond its own pristine envelope (+ margin) — deviationOf and the
+    // envelope are both position-derived quantities, so this stays within
+    // the ExtraAccel contract (amendment 2: no vel/mass reads). A healthy
+    // body (dev <= envelope+margin) feels exactly zero assist force by
+    // construction, no matter how close or massive a fab parks nearby.
+    const dev = deviationOf(b, this.bodies)
+    const envLimit = (this.envelope[b.name] ?? 0) + ENV_MARGIN
+    if (dev > envLimit) {
+      for (const fab of this.bodies) {
+        if (fab.kind !== 'fab' || fab === b) continue
+        const fabMass = this.fabMasses.get(fab.name)
+        if (fabMass === undefined) continue
+        const fd = dist(fab.pos, b.pos)
+        if (fd === 0 || fd > ASSIST_RANGE) continue
+        const restore = (ASSIST_K * fabMass) / (fd * fd)
+        const sign = d >= b.rNom ? -1 : 1 // pull back toward nominal radius
+        ax += radial.x * restore * sign
+        ay += radial.y * restore * sign
+      }
     }
 
     return v(ax, ay)
