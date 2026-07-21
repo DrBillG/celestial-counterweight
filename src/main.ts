@@ -2,9 +2,12 @@ import * as THREE from 'three'
 import { Renderer, webglAvailable } from './render/renderer'
 import { Sky } from './render/sky'
 import { Orrery } from './render/orrery'
+import { CameraDirector } from './render/cameraDirector'
+import { BridgeFrame } from './render/bridge'
 import { Director } from './game/director'
 
 const app = document.getElementById('app')!
+const hud = document.getElementById('hud')!
 if (!webglAvailable()) {
   app.innerHTML =
     '<div style="color:#cfe3ff;font-family:monospace;padding:40vh 20px;text-align:center">Celestial Counterweight needs WebGL. Please try a modern desktop browser.</div>'
@@ -14,6 +17,13 @@ if (!webglAvailable()) {
   const sky = new Sky()
   const orrery = new Orrery(director.sim)
   r.scene.add(sky.group, orrery.group)
+
+  // Camera director owns the camera each frame (position, lookAt, near plane):
+  // it dives from the god view down to a bridge view behind the ship when the
+  // Director is mining/constructing, and pulls back out otherwise. The bridge
+  // frame is the hull-window dressing that fades in at the bottom of the dive.
+  const cameraDirector = new CameraDirector(r.camera, director)
+  const bridgeFrame = new BridgeFrame(hud)
 
   // Click → raycast the orrery → select that body as the transit target.
   const raycaster = new THREE.Raycaster()
@@ -31,11 +41,23 @@ if (!webglAvailable()) {
   // in an automated/background preview. Default (no param) still pauses on hide.
   const demo = new URLSearchParams(location.search).has('demo')
 
+  // Dev aid (gated strictly by `?demo`): expose the director + camera director
+  // so an automated preview can script a run to a given state (e.g. drive to
+  // 'mining' on titan) and observe the cinematic dive. Never present in the
+  // default (no-param) path, so there is no debug residue in production.
+  if (demo) {
+    ;(window as unknown as { __cc: unknown }).__cc = { director, cameraDirector }
+  }
+
   let last = performance.now()
   const frame = (t: number) => {
     const dt = Math.min((t - last) / 1000, 0.1)
     last = t
     if (demo || !document.hidden) director.advance(dt) // tab-hidden pause (unless ?demo)
+    // Camera dive is driven AFTER director.advance so it reads the current
+    // state (mining/constructing) this frame, not last frame's.
+    cameraDirector.update(dt)
+    bridgeFrame.setVisible(cameraDirector.isBridge())
     sky.update(t / 1000, director.sim.harmony())
     orrery.update(t / 1000)
     r.render()
