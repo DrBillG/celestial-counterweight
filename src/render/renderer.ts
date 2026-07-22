@@ -1,0 +1,75 @@
+import * as THREE from 'three'
+import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer.js'
+import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js'
+import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js'
+
+export class Renderer {
+  renderer: THREE.WebGLRenderer
+  scene = new THREE.Scene()
+  camera: THREE.PerspectiveCamera
+  composer: EffectComposer
+  private bloom: UnrealBloomPass
+
+  constructor(container: HTMLElement) {
+    this.renderer = new THREE.WebGLRenderer({ antialias: true })
+    this.renderer.setPixelRatio(Math.min(devicePixelRatio, 2))
+    this.renderer.setSize(innerWidth, innerHeight)
+    container.appendChild(this.renderer.domElement)
+
+    this.camera = new THREE.PerspectiveCamera(55, innerWidth / innerHeight, 0.1, 5000)
+    // Tilted god view of the xy orbital plane, pulled in so the populated inner
+    // system (mercury..saturn) fills the frame while neptune + the Harmony Ring
+    // sit near the edges.
+    this.camera.position.set(0, -190, 150)
+    this.camera.lookAt(0, 0, 0)
+
+    this.composer = new EffectComposer(this.renderer)
+    this.composer.addPass(new RenderPass(this.scene, this.camera))
+    // Bloom threshold 0.32 (was 0.0): only genuinely bright emitters — the sun
+    // and the hero/near stars whose cores exceed ~1.0 luminance — burn with
+    // halos. A ~0 threshold also blooms mid-bright planet SURFACES, which
+    // blows the close-up bridge view (Task 13) into featureless white blobs;
+    // gating at 0.32 keeps Saturn's bands and Titan's ice legible up close
+    // while the sky's hero stars (near layer, brightness 1.3) still clear it.
+    this.bloom = new UnrealBloomPass(new THREE.Vector2(innerWidth, innerHeight), 1.1, 0.6, 0.32)
+    this.composer.addPass(this.bloom)
+
+    addEventListener('resize', () => {
+      this.camera.aspect = innerWidth / innerHeight
+      this.camera.updateProjectionMatrix()
+      this.renderer.setSize(innerWidth, innerHeight)
+      this.composer.setSize(innerWidth, innerHeight)
+    })
+  }
+
+  render() {
+    this.composer.render()
+  }
+
+  // Perf autoscale (Task 16) last resort: at the lowest sky tier, if frames are
+  // still slow, drop bloom to a near-flat strength (kept nonzero so hero stars
+  // and the sun don't go completely dull). One-way, like the sky downscale.
+  reduceBloom(): void {
+    this.bloom.strength = 0.15
+  }
+
+  // Free GPU resources so the sky/scene can be torn down and rebuilt
+  // (e.g. Task 16 quality changes) without leaking buffers or contexts.
+  dispose() {
+    for (const pass of this.composer.passes) {
+      ;(pass as { dispose?: () => void }).dispose?.()
+    }
+    this.composer.renderTarget1.dispose()
+    this.composer.renderTarget2.dispose()
+    this.renderer.dispose()
+  }
+}
+
+export function webglAvailable(): boolean {
+  try {
+    const c = document.createElement('canvas')
+    return !!(c.getContext('webgl2') || c.getContext('webgl'))
+  } catch {
+    return false
+  }
+}

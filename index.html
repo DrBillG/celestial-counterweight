@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Celestial Counterweight</title>
+    <style>
+      html, body { margin: 0; height: 100%; background: #01020a; overflow: hidden; }
+      #app canvas { display: block; }
+      #hud { position: fixed; inset: 0; pointer-events: none; font-family: ui-monospace, monospace; }
+      #hud .clickable { pointer-events: auto; }
+      /* Planet-texture attribution (Solar System Scope, CC BY 4.0) — kept
+         always-visible for license compliance. Non-interactive except the link. */
+      #credit { position: fixed; bottom: 6px; right: 10px; z-index: 2; pointer-events: none;
+        font-family: ui-monospace, monospace; font-size: 11px; color: rgba(150,180,220,0.45); }
+      #credit a { color: inherit; pointer-events: auto; }
+    </style>
+  </head>
+  <body>
+    <div id="app"></div>
+    <div id="hud"></div>
+    <div id="credit">Textures: <a href="https://www.solarsystemscope.com/textures" target="_blank" rel="noopener">Solar System Scope</a> · CC BY 4.0</div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
