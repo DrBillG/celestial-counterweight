@@ -53,6 +53,11 @@ export class Renderer {
     this.bloom.strength = 0.15
   }
 
+  // Set bloom strength directly (loss cinematic cranks it up for the supernova).
+  setBloom(strength: number): void {
+    this.bloom.strength = strength
+  }
+
   // Free GPU resources so the sky/scene can be torn down and rebuilt
   // (e.g. Task 16 quality changes) without leaking buffers or contexts.
   dispose() {

@@ -87,6 +87,15 @@ export class GameAudio {
     this.tone(880, 0.08, 'sine', 0.08)
   }
 
+  // The supernova detonation in the loss cinematic — a huge layered boom with a
+  // rising shriek and a long sub-bass tail.
+  supernova(): void {
+    this.tone(70, 2.6, 'sawtooth', 0.3)
+    this.tone(48, 3.0, 'triangle', 0.28)
+    this.tone(180, 1.4, 'sawtooth', 0.14)
+    setTimeout(() => this.tone(90, 1.8, 'sine', 0.2), 120)
+  }
+
   // ---- haptics -----------------------------------------------------------
 
   // Rumble the first connected gamepad. No gamepad (or no vibration actuator) →

@@ -131,6 +131,8 @@ if (!webglAvailable()) {
   let skyQuality: 1 | 2 | 3 = 3
   let slowSince = 0
   let bloomReduced = false
+  let lostAt = -1 // perf ms when the loss cinematic began (one-time setup latch)
+  let novaFired = false
 
   let last = performance.now()
   const frame = (t: number) => {
@@ -153,8 +155,24 @@ if (!webglAvailable()) {
     cameraDirector.update(dt)
     bridgeFrame.setVisible(cameraDirector.isBridge())
     sky.update(t / 1000, director.sim.harmony())
-    orrery.setSelected(director.currentTarget())
-    orrery.update(t / 1000, r.camera)
+    if (director.state === 'lost') {
+      // Loss cinematic: the orrery takes over — planets spiral into the sun and
+      // it goes supernova. One-time setup: crank bloom for the blowout + a boom.
+      if (lostAt < 0) {
+        lostAt = t
+        bridgeFrame.setVisible(false)
+        r.setBloom(1.9)
+      }
+      const el = (t - lostAt) / 1000
+      if (!novaFired && el >= 3.7) {
+        novaFired = true
+        audio.supernova()
+      }
+      orrery.playCataclysm(t / 1000, r.camera)
+    } else {
+      orrery.setSelected(director.currentTarget())
+      orrery.update(t / 1000, r.camera)
+    }
     r.render()
 
     // Autoscale check (see block above the loop). EMA of the per-frame compute

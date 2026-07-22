@@ -452,25 +452,38 @@ export class Hud {
     this.banner.style.display = performance.now() < this.bannerUntil ? 'block' : 'none'
   }
 
+  private lostShownAt = 0
   private renderEnd(d: Director): void {
     if (d.state !== 'won' && d.state !== 'lost') {
       this.endScreen.style.display = 'none'
+      this.lostShownAt = 0
       return
     }
-    this.endScreen.style.display = 'block'
     if (d.state === 'won') {
+      this.endScreen.style.display = 'block'
       this.endScreen.innerHTML =
         `<div style="color:${GOLD};font-size:26px;text-shadow:0 0 16px ${GOLD}88">☀ SPHERE COMPLETE</div>` +
         `<div style="font-size:13px;opacity:.85;margin-top:8px">The system hums in balance.</div>` +
         this.restartButton(GOLD)
-    } else {
-      const cause = this.lastCause ? `<div style="font-size:12px;opacity:.7;margin-top:4px">cause: ${this.lastCause}</div>` : ''
-      this.endScreen.innerHTML =
-        `<div style="color:${RED};font-size:26px;text-shadow:0 0 16px ${RED}88">☄ SYSTEM LOST</div>` +
-        `<div style="font-size:13px;opacity:.85;margin-top:8px">Gravity always collects.</div>` +
-        cause +
-        this.restartButton(RED)
+      return
     }
+    // LOST: let the supernova cinematic play first — hold the panel back ~5.2s,
+    // then drop the (deliberately celebratory) game-over card over the afterglow.
+    if (!this.lostShownAt) this.lostShownAt = performance.now()
+    if (performance.now() - this.lostShownAt < 5200) {
+      this.endScreen.style.display = 'none'
+      return
+    }
+    const cause = this.lastCause
+      ? `<div style="font-size:12px;opacity:.7;margin-top:6px">first to go: ${this.lastCause}</div>`
+      : ''
+    this.endScreen.style.display = 'block'
+    this.endScreen.innerHTML =
+      `<div style="color:${GOLD};font-size:24px;text-shadow:0 0 20px ${GOLD}">🎉 CONGRATULATIONS 🎉</div>` +
+      `<div style="color:${RED};font-size:19px;font-weight:bold;margin-top:8px;text-shadow:0 0 16px ${RED}88">You just blew up the entire solar system.</div>` +
+      `<div style="font-size:13px;opacity:.85;margin-top:8px">Gravity always collects. Every last planet, into the sun.</div>` +
+      cause +
+      this.restartButton(RED)
   }
 
   private restartButton(color: string): string {

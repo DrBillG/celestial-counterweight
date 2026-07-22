@@ -53,6 +53,14 @@ const RING_RADIUS = 348 // just outside neptune
 const PICK_SCREEN_FRAC = 0.045
 const MIN_PROXY_WORLD = 3
 
+// Loss-cinematic timeline (seconds from state → 'lost').
+const CATA = {
+  fall: 2.4, // how long a body takes to spiral into the sun once it starts
+  swell: 2.7, // sun begins to swell
+  nova: 3.7, // supernova detonates
+  total: 6.2, // cinematic length; HUD end-screen appears near the end
+} as const
+
 // A growing orbit trail: a fixed-capacity dynamic position buffer driven by a
 // draw range (see note in addBody on why setFromPoints can't be reused here).
 interface Trail {
@@ -80,6 +88,16 @@ export class Orrery {
   private selectionRing: THREE.Mesh
   private selected: string | null = null
   private harmonyRing: THREE.Mesh
+  // Loss cinematic ("cataclysm"): planets spiral into the sun, explode, and the
+  // sun goes supernova. Purely visual, time-driven — the sim is already stopped.
+  private cataStart = -1
+  private cataCaptured = new Map<string, { x: number; y: number; ang: number; r: number; delay: number }>()
+  private cataFlashed = new Set<string>()
+  private cataFlashes: { mesh: THREE.Mesh; born: number; life: number; max: number }[] = []
+  private cataNova?: THREE.Mesh
+  private cataShock?: THREE.Mesh
+  private cataDebris?: THREE.Points
+  private novaFired = false
   private loader = new THREE.TextureLoader()
 
   constructor(private sim: Sim) {
@@ -350,6 +368,169 @@ export class Orrery {
   // Tell the orrery which body is selected (drives the reticle). null = none.
   setSelected(name: string | null): void {
     this.selected = name
+  }
+
+  // ---- loss cinematic -----------------------------------------------------
+
+  // Returns true while the cinematic is still playing. main.ts calls this
+  // instead of update() once the run is lost. `time` is seconds (perf clock).
+  playCataclysm(time: number, camera?: THREE.Camera): boolean {
+    if (this.cataStart < 0) this.startCataclysm(time)
+    const e = time - this.cataStart
+    const sun = this.meshes.get('sun')!
+    this.selectionRing.visible = false
+
+    // Bodies spiral into the sun, spinning and shrinking, then flash on impact.
+    for (const [name, mesh] of this.meshes) {
+      if (name === 'sun') continue
+      const c = this.cataCaptured.get(name)
+      if (!c) continue
+      const p = Math.min(1, Math.max(0, (e - c.delay) / CATA.fall))
+      const ease = p * p * p // accelerate inward
+      const ang = c.ang + ease * Math.PI * 3 // spiral
+      const r = c.r * (1 - ease)
+      mesh.position.set(Math.cos(ang) * r, Math.sin(ang) * r, 0)
+      mesh.scale.setScalar(Math.max(0.001, 1 - ease))
+      mesh.rotation.z += 0.3
+      if (p >= 0.86 && !this.cataFlashed.has(name)) {
+        this.cataFlashed.add(name)
+        this.spawnFlash(mesh.position.x, mesh.position.y, time, 1.4 + c.r * 0.03)
+      }
+      if (p >= 1) mesh.visible = false
+    }
+
+    // Sun swells and whitens, then detonates.
+    if (e >= CATA.swell) {
+      const s = 1 + (e - CATA.swell) * 2.4
+      sun.scale.setScalar(Math.min(s, 4))
+      const sm = (sun as THREE.Mesh).material as THREE.MeshBasicMaterial
+      const w = Math.min(1, (e - CATA.swell) / (CATA.nova - CATA.swell))
+      sm.color.setRGB(1, 0.91 + 0.09 * w, 0.63 + 0.37 * w) // → white-hot
+    }
+    if (e >= CATA.nova && !this.novaFired) {
+      this.novaFired = true
+      this.fireNova(time)
+      this.spawnDebris(time)
+    }
+    this.updateNova(time, e)
+    this.updateFlashes(time)
+
+    // Harmony ring + guide rings fade away as the system dies.
+    const fade = Math.max(0, 1 - e / CATA.nova)
+    ;(this.harmonyRing.material as THREE.MeshBasicMaterial).opacity = 0.5 * fade
+    for (const [, g] of this.guides) (g.loop.material as THREE.LineBasicMaterial).opacity = 0.16 * fade
+    for (const [, t] of this.trails) (t.line.material as THREE.LineBasicMaterial).opacity = 0.6 * fade
+
+    void camera
+    return e < CATA.total
+  }
+
+  private startCataclysm(time: number): void {
+    this.cataStart = time
+    const sun = this.meshes.get('sun')!
+    const sx = sun.position.x
+    const sy = sun.position.y
+    let maxR = 1
+    for (const b of this.sim.bodies) {
+      if (b.name === 'sun' || b.kind === 'fab' || b.kind === 'ship') continue
+      const dx = b.pos.x * POS_SCALE - sx
+      const dy = b.pos.y * POS_SCALE - sy
+      maxR = Math.max(maxR, Math.hypot(dx, dy))
+    }
+    for (const b of this.sim.bodies) {
+      if (b.name === 'sun') continue
+      const mesh = this.meshes.get(b.name)
+      if (!mesh) continue
+      const dx = b.pos.x * POS_SCALE - sx
+      const dy = b.pos.y * POS_SCALE - sy
+      const r = Math.hypot(dx, dy)
+      // closer bodies fall first (staggered), farthest starts ~1.1s later
+      this.cataCaptured.set(b.name, { x: dx, y: dy, ang: Math.atan2(dy, dx), r, delay: (r / maxR) * 1.1 })
+    }
+  }
+
+  private spawnFlash(x: number, y: number, time: number, max: number): void {
+    const mesh = new THREE.Mesh(
+      new THREE.SphereGeometry(1, 16, 16),
+      new THREE.MeshBasicMaterial({ color: 0xffdca0, transparent: true, opacity: 1, blending: THREE.AdditiveBlending, depthWrite: false }),
+    )
+    mesh.position.set(x, y, 0)
+    this.group.add(mesh)
+    this.cataFlashes.push({ mesh, born: time, life: 0.6, max })
+  }
+
+  private updateFlashes(time: number): void {
+    for (let i = this.cataFlashes.length - 1; i >= 0; i--) {
+      const f = this.cataFlashes[i]
+      const a = (time - f.born) / f.life
+      if (a >= 1) {
+        this.group.remove(f.mesh)
+        f.mesh.geometry.dispose()
+        ;(f.mesh.material as THREE.Material).dispose()
+        this.cataFlashes.splice(i, 1)
+        continue
+      }
+      f.mesh.scale.setScalar(0.2 + a * f.max)
+      ;(f.mesh.material as THREE.MeshBasicMaterial).opacity = 1 - a
+    }
+  }
+
+  private fireNova(time: number): void {
+    this.cataNova = new THREE.Mesh(
+      new THREE.SphereGeometry(1, 32, 32),
+      new THREE.MeshBasicMaterial({ color: 0xfff4d0, transparent: true, opacity: 1, blending: THREE.AdditiveBlending, depthWrite: false }),
+    )
+    this.cataShock = new THREE.Mesh(
+      new THREE.TorusGeometry(1, 0.06, 8, 96),
+      new THREE.MeshBasicMaterial({ color: 0xffd090, transparent: true, opacity: 0.9, blending: THREE.AdditiveBlending, depthWrite: false }),
+    )
+    this.group.add(this.cataNova, this.cataShock)
+    void time
+  }
+
+  private spawnDebris(time: number): void {
+    const N = 600
+    const pos = new Float32Array(N * 3)
+    const vel: number[] = []
+    for (let i = 0; i < N; i++) {
+      const a = (i / N) * Math.PI * 2 + Math.random() * 0.3
+      const sp = 40 + Math.random() * 260
+      vel.push(Math.cos(a) * sp, Math.sin(a) * sp)
+    }
+    const geo = new THREE.BufferGeometry()
+    geo.setAttribute('position', new THREE.BufferAttribute(pos, 3))
+    const pts = new THREE.Points(
+      geo,
+      new THREE.PointsMaterial({ color: 0xffdca0, size: 3, transparent: true, opacity: 1, blending: THREE.AdditiveBlending, depthWrite: false }),
+    )
+    pts.userData.vel = vel
+    pts.userData.born = time
+    this.group.add(pts)
+    this.cataDebris = pts
+  }
+
+  private updateNova(time: number, e: number): void {
+    if (this.cataNova) {
+      const t = e - CATA.nova
+      const scale = t < 0.35 ? t / 0.35 * 55 : 55 - (t - 0.35) * 30
+      this.cataNova.scale.setScalar(Math.max(0.1, scale))
+      ;(this.cataNova.material as THREE.MeshBasicMaterial).opacity = Math.max(0, 1 - t * 0.7)
+    }
+    if (this.cataShock) {
+      const t = e - CATA.nova
+      this.cataShock.scale.setScalar(2 + t * 240)
+      ;(this.cataShock.material as THREE.MeshBasicMaterial).opacity = Math.max(0, 0.9 - t * 0.6)
+    }
+    if (this.cataDebris) {
+      const dt = time - (this.cataDebris.userData.born as number)
+      const attr = this.cataDebris.geometry.getAttribute('position') as THREE.BufferAttribute
+      const vel = this.cataDebris.userData.vel as number[]
+      for (let i = 0; i < attr.count; i++) {
+        attr.setXY(i, vel[i * 2] * dt, vel[i * 2 + 1] * dt)
+      }
+      attr.needsUpdate = true
+      ;(this.cataDebris.material as THREE.PointsMaterial).opacity = Math.max(0, 1 - dt * 0.5)
+    }
   }
 
   // Click-picking → minable body name, or null (a miss → the caller deselects).
