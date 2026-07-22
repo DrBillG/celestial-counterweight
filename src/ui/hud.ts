@@ -68,6 +68,8 @@ export class Hud {
   private alerts: HTMLDivElement
   private banner: HTMLDivElement
   private endScreen: HTMLDivElement
+  private coach: HTMLDivElement
+  private transit: HTMLDivElement
 
   private alertLines: string[] = []
   // Bodies currently in a red/critical band (event-tracked): the alarm is on
@@ -92,7 +94,9 @@ export class Hud {
        <div id="cc-cards" class="clickable" style="position:absolute;bottom:26px;left:50%;transform:translateX(-50%);display:flex;gap:14px;align-items:stretch"></div>
        <div id="cc-alerts" style="${PANEL}bottom:26px;right:12px;width:236px;border-color:rgba(224,94,94,.55);display:none"></div>
        <div id="cc-banner" style="${PANEL}top:118px;left:50%;transform:translateX(-50%);max-width:70vw;text-align:center;border-color:rgba(224,94,94,.7);color:${RED};font-size:15px;font-weight:bold;text-shadow:0 0 10px rgba(224,60,60,.6);display:none"></div>
-       <div id="cc-end" class="clickable" style="${PANEL}top:50%;left:50%;transform:translate(-50%,-50%);text-align:center;padding:26px 34px;display:none"></div>`,
+       <div id="cc-end" class="clickable" style="${PANEL}top:50%;left:50%;transform:translate(-50%,-50%);text-align:center;padding:26px 34px;display:none"></div>
+       <div id="cc-coach" style="${PANEL}top:58px;left:50%;transform:translateX(-50%);max-width:64vw;text-align:center;border-color:rgba(87,200,255,.45);color:${CYAN};font-size:13px;display:none"></div>
+       <div id="cc-transit" style="${PANEL}top:50%;left:50%;transform:translate(-50%,-50%);text-align:center;padding:16px 26px;border-color:rgba(87,200,255,.6);min-width:260px;display:none"></div>`,
     )
     this.top = root.querySelector('#cc-top')!
     this.inspector = root.querySelector('#cc-inspector')!
@@ -100,6 +104,30 @@ export class Hud {
     this.alerts = root.querySelector('#cc-alerts')!
     this.banner = root.querySelector('#cc-banner')!
     this.endScreen = root.querySelector('#cc-end')!
+    this.coach = root.querySelector('#cc-coach')!
+    this.transit = root.querySelector('#cc-transit')!
+  }
+
+  // The single most useful "what do I do next" line, by game state. Keeps a
+  // first-time player oriented without a full tutorial.
+  private coachText(d: Director): string {
+    switch (d.state) {
+      case 'orrery':
+        if (!d.currentTarget()) return 'Click a glowing moon (they pulse) to pick a mining target.'
+        if (d.currentTarget() === 'fab') return 'Press ▸ PLOT COURSE to fly to the sun and build.'
+        if (d.cargo > 0) return 'You have cargo — press ▸ DELIVER TO FAB to build the sphere.'
+        return 'Press ▸ PLOT COURSE & LAUNCH to travel to the selected body.'
+      case 'transit':
+        return ''
+      case 'mining':
+        if (!d.activeExtraction()) return 'Press ⛏ LATTICE BORE to mine gently (STRIP BLAST is faster but risky).'
+        if (d.cargo > 0) return 'Mining… press 🚀 DEPART TO FAB when you have enough cargo.'
+        return 'Mining…'
+      case 'constructing':
+        return 'Press ⬡ COUNTERWEIGHT PLACEMENT before the timer runs out.'
+      default:
+        return ''
+    }
   }
 
   // Delegate every data-id button/element click in the HUD to onChoice.
@@ -133,8 +161,35 @@ export class Hud {
     this.renderCards(d)
     this.renderAlerts()
     this.renderBanner()
+    this.renderTransit(d)
+    this.renderCoach(d)
     this.renderEnd(d)
     this.bridge?.setAlarm(this.alarmLatched || this.redBodies.size > 0)
+  }
+
+  private renderCoach(d: Director): void {
+    const text = d.state === 'won' || d.state === 'lost' ? '' : this.coachText(d)
+    if (!text) {
+      this.coach.style.display = 'none'
+      return
+    }
+    this.coach.style.display = 'block'
+    this.coach.textContent = text
+  }
+
+  private renderTransit(d: Director): void {
+    if (d.state !== 'transit') {
+      this.transit.style.display = 'none'
+      return
+    }
+    const dest = (d.currentTarget() ?? '').toUpperCase()
+    const pct = Math.round(d.transitProgress() * 100)
+    this.transit.style.display = 'block'
+    this.transit.innerHTML =
+      `<div style="color:${CYAN};font-weight:bold;letter-spacing:1px;text-shadow:0 0 10px ${CYAN}88">▸ EN ROUTE — ${dest}</div>` +
+      `<div style="height:8px;background:#0c1526;border-radius:5px;margin:10px 0 4px;overflow:hidden">` +
+      `<div style="height:100%;width:${pct}%;background:${CYAN};box-shadow:0 0 8px ${CYAN}"></div></div>` +
+      `<div style="opacity:.7;font-size:11px">arriving in ${d.transitRemaining().toFixed(1)}s · click 🔥 SLINGSHOT BURN to speed up</div>`
   }
 
   // ---- event ingestion ----------------------------------------------------

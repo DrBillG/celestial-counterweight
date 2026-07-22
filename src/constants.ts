@@ -18,7 +18,16 @@ export const BAND_RED = 60
 export const BAND_CRITICAL = 30
 export const ENV_MARGIN = 0.01  // absolute slack over the pristine envelope; mining elsewhere shifts ambient forcing slightly
 export const HELD_RECOVERY_PER_TU = 0.25  // TUNE: held-score recovery rate; genuine healing arrives with Task 8's re-circularization
-export const RUNAWAY_ACCEL = 0.004     // TUNE: designed instability past critical
+// Post-UX-cap retune (shorter transits let the GREEDY bot brute-force a win
+// before titan cascaded). ASYM.strip's cascade-ONSET time proved phase-locked
+// (~150tu regardless of 0.8→1.2) so it alone can't make reckless play die in
+// time, and it saturates the flapping-zone healing proof above ~0.96; REQ is
+// capped below greedy's hard 0.020 bank ceiling. RUNAWAY_ACCEL is the only
+// lever that actually pulls a critical body's collision earlier, so it was
+// raised 0.004→0.013 to bring greedy's titan death to t≈99 (before its 4th
+// delivery at t≈104). 0.014 breaks the grid-robust rescue proof (runaway
+// out-pulls the PD assist); 0.013 rescues cleanly (endBand green, dev 0.26→0.01).
+export const RUNAWAY_ACCEL = 0.013     // TUNE: designed instability past critical (retuned 0.004→0.013, see above)
 export const EJECT_RADIUS = 600        // beyond this from sun = ejected (lose event)
 
 // Mining (Task 5; rates retuned in Task 9 per amendment 10 — the original
@@ -26,7 +35,13 @@ export const EJECT_RADIUS = 600        // beyond this from sun = ejected (lose e
 // fatal single-dose threshold. These rates make mining gradual pressure
 // instead of instant catastrophe; Task 10 finalizes per-body.)
 export const EJECTA_SPEED = 2.0
-export const ASYM = { strip: 0.8, lattice: 0.05 } as const
+// strip raised 0.8→0.945 (lattice UNCHANGED — leaves EFFICIENT untouched): with
+// RUNAWAY_ACCEL=0.013 this puts greedy's titan death in a CONTIGUOUS lose-basin
+// (strip 0.94–0.955 all die at t≈99–101, before greedy's 4th delivery), not a
+// lone chaotic pocket. Kept ≤~0.96 so the 0.00005-dose flapping-zone healing
+// proof still holds (it saturates by ~0.98). strip:lattice = 18.9× keeps the
+// mining ≥5× impulse invariant with wide margin.
+export const ASYM = { strip: 0.945, lattice: 0.05 } as const
 export const RATE = { strip: 0.0002, lattice: 0.00005 } as const  // TUNE: mass units per tu
 export const RATE_SLAG = 0.0002        // TUNE: mass/tu returned to a body during slag mode
 // Director-side husk guard (amendment 9): refuse to mine a body below this
@@ -105,10 +120,17 @@ export const FAB_MIN_SEPARATION = 8    // TUNE
 // amendment-13a [0.010, 0.025], skilled-but-comfortable: the reference bot
 // wins in ≈7 rounds with ~75% of the run to spare, while the greedy strip
 // bot loses long before banking a third of it.
-export const SPHERE_MASS_REQUIRED = 0.012 // TUNE: total delivered mass to win
+// Retuned 0.012→0.014 (small bump, still ≪ efficient's ≈0.024 measured ceiling
+// and ≤0.02 cap): greedy's hard bank ceiling is 3 deliveries (0.012) once its
+// titan dies at t≈99, so 0.014 makes 3 deliveries fall clearly short (85.7%)
+// while the 4th (0.016) it never reaches would be needed to win. Efficient still
+// wins in ~11 rounds at t≈366 (well inside the 0.75·RUN_DURATION bound).
+export const SPHERE_MASS_REQUIRED = 0.014 // TUNE: total delivered mass to win
 
 // Director (Task 9)
 export const SIM_RATE = 1              // TUNE: sim tu advanced per real-time unit passed to Director.advance
 export const TRAVEL_SPEED = 25         // TUNE: ship transit speed (distance units per tu)
+export const MIN_TRANSIT = 1.4         // TUNE: floor on transit seconds — near trips still read as a journey
+export const MAX_TRANSIT = 3.0         // TUNE: cap on transit seconds — far trips (Titan ~13s raw) stay snappy
 export const SLINGSHOT_BONUS = 0.35    // TUNE: one burn() per transit cuts the remaining time by this fraction
 export const DECISION_WINDOW = 8       // TUNE: tu to decide at the construction site before auto-placement

@@ -137,6 +137,7 @@ if (!webglAvailable()) {
     cameraDirector.update(dt)
     bridgeFrame.setVisible(cameraDirector.isBridge())
     sky.update(t / 1000, director.sim.harmony())
+    orrery.setSelected(director.currentTarget())
     orrery.update(t / 1000, r.camera)
     r.render()
 

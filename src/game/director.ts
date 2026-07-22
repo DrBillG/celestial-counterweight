@@ -25,7 +25,7 @@ import { extract, returnSlag } from '../sim/mining'
 import { dist, norm, sub, v, type Vec } from '../sim/vec'
 import {
   RATE, RATE_SLAG, EXTRACTION_FLOOR, SPHERE_MASS_REQUIRED,
-  SIM_RATE, TRAVEL_SPEED, SLINGSHOT_BONUS, DECISION_WINDOW,
+  SIM_RATE, TRAVEL_SPEED, MIN_TRANSIT, MAX_TRANSIT, SLINGSHOT_BONUS, DECISION_WINDOW,
   FAB_MASS_RATIO_MAX, FAB_MIN_SEPARATION,
 } from '../constants'
 
@@ -60,6 +60,8 @@ export class Director {
   private location: { kind: 'start' } | { kind: 'body'; name: string } | { kind: 'anchor' } =
     { kind: 'start' }
   private transitLeft = 0
+  private transitTotal = 1 // full transit duration, for the visual fly-along + HUD bar
+  private transitFrom = v(0, 0) // ship position at launch, lerped toward the target
   private burnUsed = false
   private decisionLeft = 0
   private mode: ExtractionMode | null = null
@@ -79,6 +81,12 @@ export class Director {
 
   transitRemaining(): number {
     return this.state === 'transit' ? this.transitLeft : 0
+  }
+
+  // 0→1 progress along the current transit (for the HUD "en route" bar).
+  transitProgress(): number {
+    if (this.state !== 'transit' || this.transitTotal <= 0) return 0
+    return Math.min(1, Math.max(0, 1 - this.transitLeft / this.transitTotal))
   }
 
   decisionRemaining(): number {
@@ -153,8 +161,14 @@ export class Director {
     this.sim.setShipAssist(null)
     this.mode = null
     this.decisionLeft = 0
-    const d = dist(this.shipPos(), this.targetPos(this.target))
-    this.transitLeft = d / TRAVEL_SPEED
+    // Clamp every trip to a snappy, always-visible window regardless of how far
+    // the target is — a raw distance/speed transit made far bodies (Titan) a
+    // ~13s silent wait, which reads as "nothing is happening".
+    const from = this.shipPos()
+    const d = dist(from, this.targetPos(this.target))
+    this.transitFrom = from
+    this.transitLeft = Math.min(Math.max(d / TRAVEL_SPEED, MIN_TRANSIT), MAX_TRANSIT)
+    this.transitTotal = this.transitLeft
     this.burnUsed = false
     this.state = 'transit'
   }
@@ -217,6 +231,18 @@ export class Director {
 
     if (this.state === 'transit') {
       this.transitLeft -= dt
+      // Fly the ship marker from its launch point to the (moving) target so the
+      // journey is visible on screen — smoothstep for an ease-in/out glide.
+      const to = this.targetPos(this.target!)
+      const p = this.transitProgress()
+      const e = p * p * (3 - 2 * p)
+      const ship = findBody(this.sim.bodies, 'ship')
+      if (ship) {
+        ship.pos = v(
+          this.transitFrom.x + (to.x - this.transitFrom.x) * e,
+          this.transitFrom.y + (to.y - this.transitFrom.y) * e,
+        )
+      }
       if (this.transitLeft <= 0) this.arrive()
       return
     }

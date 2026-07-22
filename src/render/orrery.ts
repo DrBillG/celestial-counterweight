@@ -75,6 +75,10 @@ export class Orrery {
   // (or misses → deselect) rather than landing on scenery like Venus.
   private pickProxies: THREE.Mesh[] = []
   private pickProxyByName = new Map<string, THREE.Mesh>()
+  // Bright ring drawn around the currently-selected body so a click has obvious,
+  // immediate feedback in the 3D scene (not just the side panel).
+  private selectionRing: THREE.Mesh
+  private selected: string | null = null
   private harmonyRing: THREE.Mesh
   private loader = new THREE.TextureLoader()
 
@@ -88,6 +92,15 @@ export class Orrery {
       new THREE.MeshBasicMaterial({ color: 0xffd75e, transparent: true, opacity: 0.5 }),
     )
     this.group.add(this.harmonyRing)
+
+    // Selection reticle: a bright cyan torus, hidden until a body is selected,
+    // then parked on it and pulsed in update(). Faces the camera plane (xy).
+    this.selectionRing = new THREE.Mesh(
+      new THREE.TorusGeometry(1, 0.12, 8, 48),
+      new THREE.MeshBasicMaterial({ color: 0x57c8ff, transparent: true, opacity: 0.9 }),
+    )
+    this.selectionRing.visible = false
+    this.group.add(this.selectionRing)
 
     // Sun light + low ambient so textured planets read with a lit day side.
     // High intensity, gentle decay (1.2) so both the inner planets (r~38) and
@@ -262,6 +275,11 @@ export class Orrery {
       if (b.kind === 'planet' || b.kind === 'moon' || b.kind === 'star') {
         mesh.rotation.z = time * 0.1
       }
+      // Minable bodies gently "breathe" so they read as interactive targets.
+      if (b.minable) {
+        const s = 1 + 0.12 * Math.sin(time * 2.2)
+        mesh.scale.setScalar(s)
+      }
       // Keep the invisible click-proxy glued to its (moving) body, and scale it
       // to a roughly constant screen size based on distance from the camera.
       const proxy = this.pickProxyByName.get(b.name)
@@ -314,6 +332,24 @@ export class Orrery {
     const h = this.sim.harmony()
     const rm = this.harmonyRing.material as THREE.MeshBasicMaterial
     rm.opacity = 0.15 + 0.5 * (h / 100) + (h < 60 ? 0.15 * Math.sin(time * 10) : 0)
+
+    // Selection reticle: park on the selected body and pulse, or hide.
+    const sel = this.selected ? this.sim.bodies.find((b) => b.name === this.selected) : undefined
+    if (sel) {
+      const ring = this.selectionRing
+      ring.visible = true
+      ring.position.set(sel.pos.x * POS_SCALE, sel.pos.y * POS_SCALE, 0)
+      const r = Math.max(sel.radius * 2.2, 5) * (1 + 0.08 * Math.sin(time * 5))
+      ring.scale.setScalar(r)
+      ;(ring.material as THREE.MeshBasicMaterial).opacity = 0.6 + 0.35 * Math.abs(Math.sin(time * 4))
+    } else {
+      this.selectionRing.visible = false
+    }
+  }
+
+  // Tell the orrery which body is selected (drives the reticle). null = none.
+  setSelected(name: string | null): void {
+    this.selected = name
   }
 
   // Click-picking → minable body name, or null (a miss → the caller deselects).
