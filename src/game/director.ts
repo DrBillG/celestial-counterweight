@@ -136,6 +136,14 @@ export class Director {
     }
   }
 
+  // Clear the current selection. Only meaningful in 'orrery' (before a course is
+  // plotted) — once transiting/mining/constructing the ship is committed to its
+  // target, so deselect is a no-op there. Lets the player click empty space (or
+  // the HUD ✕) to back out of a pick.
+  clearTarget(): void {
+    if (this.state === 'orrery') this.target = null
+  }
+
   launch(): void {
     if (this.state !== 'orrery' && this.state !== 'mining' && this.state !== 'constructing') return
     if (!this.target) return

@@ -44,6 +44,14 @@ const TRAIL_LEN = 240
 // factor applied.
 const POS_SCALE = 1
 const RING_RADIUS = 348 // just outside neptune
+// Click proxies are scaled each frame so a minable body subtends a roughly
+// CONSTANT screen-space hit zone regardless of how far it is from the camera —
+// otherwise a distant moon (Titan) would be far harder to click than a near one.
+// worldRadius = max(body.radius*1.6, PICK_SCREEN_FRAC * cameraDistance).
+// ~0.045 ≈ a generous, moving-target-friendly zone; nearest-hit keeps the
+// tightly-packed Jupiter moons individually selectable even where zones overlap.
+const PICK_SCREEN_FRAC = 0.045
+const MIN_PROXY_WORLD = 3
 
 // A growing orbit trail: a fixed-capacity dynamic position buffer driven by a
 // draw range (see note in addBody on why setFromPoints can't be reused here).
@@ -60,6 +68,13 @@ export class Orrery {
   // Static orbit skeleton: a faint full circle at each body's rNom, re-centred
   // each frame on its parent's CURRENT position (planets → sun, moons → planet).
   private guides = new Map<string, { loop: THREE.LineLoop; parentName: string }>()
+  // Invisible, generously-sized click targets for the MINABLE bodies. Moons are
+  // tiny and moving, so raycasting their visible mesh is fiddly; each proxy is a
+  // big invisible sphere carrying userData.bodyName that pick() raycasts instead.
+  // Only minable bodies get one, so a click resolves to a valid mining target
+  // (or misses → deselect) rather than landing on scenery like Venus.
+  private pickProxies: THREE.Mesh[] = []
+  private pickProxyByName = new Map<string, THREE.Mesh>()
   private harmonyRing: THREE.Mesh
   private loader = new THREE.TextureLoader()
 
@@ -142,6 +157,23 @@ export class Orrery {
     this.group.add(mesh)
     this.meshes.set(b.name, mesh)
 
+    // Easy-click hit zone for minable bodies: a big invisible sphere (colorWrite
+    // & depthWrite off so it draws nothing and never occludes) sized to at least
+    // MIN_PICK_RADIUS game units, so tiny moving moons are comfortable to click.
+    if (b.minable) {
+      // Unit sphere; update() scales it to the target screen size each frame.
+      const proxy = new THREE.Mesh(
+        new THREE.SphereGeometry(1, 12, 12),
+        new THREE.MeshBasicMaterial({ colorWrite: false, depthWrite: false }),
+      )
+      proxy.userData.bodyName = b.name
+      proxy.userData.bodyRadius = b.radius
+      proxy.renderOrder = -1
+      this.group.add(proxy)
+      this.pickProxies.push(proxy)
+      this.pickProxyByName.set(b.name, proxy)
+    }
+
     if ((b.kind === 'planet' || b.kind === 'moon') && b.parentName && b.rNom > 0) {
       // Static guide-ring: a faint steel-blue circle of radius rNom in the xy
       // plane, drawn once and re-centred on the parent each frame. This shows
@@ -218,7 +250,7 @@ export class Orrery {
     )
   }
 
-  update(time: number): void {
+  update(time: number, camera?: THREE.Camera): void {
     for (const b of this.sim.bodies) {
       let mesh = this.meshes.get(b.name)
       if (!mesh) {
@@ -229,6 +261,15 @@ export class Orrery {
       mesh.position.set(b.pos.x * POS_SCALE, b.pos.y * POS_SCALE, 0)
       if (b.kind === 'planet' || b.kind === 'moon' || b.kind === 'star') {
         mesh.rotation.z = time * 0.1
+      }
+      // Keep the invisible click-proxy glued to its (moving) body, and scale it
+      // to a roughly constant screen size based on distance from the camera.
+      const proxy = this.pickProxyByName.get(b.name)
+      if (proxy) {
+        proxy.position.set(b.pos.x * POS_SCALE, b.pos.y * POS_SCALE, 0)
+        const camDist = camera ? camera.position.distanceTo(proxy.position) : 250
+        const r = Math.max((proxy.userData.bodyRadius as number) * 1.6, MIN_PROXY_WORLD, PICK_SCREEN_FRAC * camDist)
+        proxy.scale.setScalar(r)
       }
 
       // Re-centre this body's guide-ring on its parent's current position
@@ -275,9 +316,11 @@ export class Orrery {
     rm.opacity = 0.15 + 0.5 * (h / 100) + (h < 60 ? 0.15 * Math.sin(time * 10) : 0)
   }
 
-  // Click-picking → body name for target selection.
+  // Click-picking → minable body name, or null (a miss → the caller deselects).
+  // Only the invisible pick proxies are tested, so clicks land on valid mining
+  // targets with a generous, moon-friendly hit zone and never on scenery/trails.
   pick(raycaster: THREE.Raycaster): string | null {
-    const hits = raycaster.intersectObjects(this.group.children, false)
+    const hits = raycaster.intersectObjects(this.pickProxies, false)
     for (const h of hits) {
       const name = h.object.userData.bodyName
       if (name) return name as string

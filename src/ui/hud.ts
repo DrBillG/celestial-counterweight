@@ -220,7 +220,14 @@ export class Hud {
     const comp = COMPOSITION[name]
     const active = d.state === 'mining' ? d.activeExtraction() : null
     this.inspector.style.display = 'block'
+    // ✕ deselect only in orrery (before committing a course); mining is committed.
+    const deselect =
+      d.state === 'orrery'
+        ? `<button class="clickable" data-id="deselect" title="deselect" style="${PANEL}position:absolute;top:8px;right:8px;` +
+          `padding:0 7px;line-height:20px;border-color:${CYAN};color:${CYAN};cursor:pointer">✕</button>`
+        : ''
     this.inspector.innerHTML =
+      deselect +
       `<div style="color:${CYAN};font-weight:bold;letter-spacing:1px">◈ ${name.toUpperCase()}</div>` +
       `<div style="margin:4px 0 6px">${this.riskBadge(d.bodyRisk(name))}</div>` +
       (comp ? `<div style="opacity:.6;font-size:11px">composition ${comp}</div>` : '') +

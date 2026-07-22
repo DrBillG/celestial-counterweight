@@ -82,6 +82,20 @@ describe('Director: run state machine (Task 9)', () => {
     expect(phW).toEqual([{ type: 'riskWarning', body: 'phobos', risk: 'fragile' }])
   })
 
+  it('clearTarget deselects in orrery, but is a no-op once committed to a transit/mining', () => {
+    const d = new Director(envelope)
+    d.selectTarget('titan')
+    expect(d.currentTarget()).toBe('titan')
+    d.clearTarget()
+    expect(d.currentTarget()).toBeNull() // deselected in orrery
+
+    // Once flying/mining, the ship is committed — deselect must not clear it.
+    flyTo(d, 'titan')
+    expect(d.currentTarget()).toBe('titan')
+    d.clearTarget()
+    expect(d.currentTarget()).toBe('titan')
+  })
+
   it('suggested placement on a calm (all-green) system parks in the sun annulus, not next to a planet', () => {
     const d = new Director(envelope)
     // Nothing has been mined — every body is green. Deliver a segment.

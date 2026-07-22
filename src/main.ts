@@ -56,6 +56,7 @@ if (!webglAvailable()) {
       case 'to-fab': director.selectTarget('fab'); director.launch(); break
       case 'place-suggested': director.placeSegment('suggested'); break
       case 'place-hasty': director.placeSegment('hasty'); break
+      case 'deselect': director.clearTarget(); break
       // Restart is a full page reload, NOT a soft in-place reset. This is
       // deliberate (amendment 15): the Sim keeps catastrophe/fabLost bodies in
       // sim.bodies and the Orrery has no dispose(), so a soft reset would leak
@@ -85,7 +86,10 @@ if (!webglAvailable()) {
       r.camera,
     )
     const name = orrery.pick(raycaster)
+    // Hit a minable body → select it. Missed (empty space) → deselect, so the
+    // player can back out of a pick by clicking away.
     if (name) director.selectTarget(name)
+    else director.clearTarget()
   })
 
   // Dev aid: `?demo` advances the sim even when the tab is hidden, so the live
@@ -133,7 +137,7 @@ if (!webglAvailable()) {
     cameraDirector.update(dt)
     bridgeFrame.setVisible(cameraDirector.isBridge())
     sky.update(t / 1000, director.sim.harmony())
-    orrery.update(t / 1000)
+    orrery.update(t / 1000, r.camera)
     r.render()
 
     // Autoscale check (see block above the loop). EMA of the per-frame compute
