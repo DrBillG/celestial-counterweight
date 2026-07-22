@@ -47,15 +47,31 @@ if (!webglAvailable()) {
   const audio = new GameAudio()
   let audioStarted = false
   hudUi.onChoice = (id) => {
+    // Instant audio confirmation on every action (the click already popped the
+    // button visually + a toast follows for the big state changes).
+    audio.unlock()
+    audio.uiConfirm()
     switch (id) {
-      case 'launch': director.launch(); break
-      case 'burn': director.burn(); break
-      case 'strip': director.chooseExtraction('strip'); break
-      case 'lattice': director.chooseExtraction('lattice'); break
-      case 'slag': director.chooseExtraction('slag'); break
-      case 'to-fab': director.selectTarget('fab'); director.launch(); break
-      case 'place-suggested': director.placeSegment('suggested'); break
-      case 'place-hasty': director.placeSegment('hasty'); break
+      case 'launch': director.launch(); hudUi.flash(`▸ PLOTTING COURSE — ${(director.currentTarget() ?? '').toUpperCase()}`); break
+      case 'burn': director.burn(); hudUi.flash('🔥 SLINGSHOT'); break
+      case 'strip': director.chooseExtraction('strip'); hudUi.flash('⛏ STRIP BLAST ENGAGED'); break
+      case 'lattice': director.chooseExtraction('lattice'); hudUi.flash('⛏ LATTICE BORE ENGAGED'); break
+      case 'slag': director.chooseExtraction('slag'); hudUi.flash('↩ RETURNING SLAG'); break
+      case 'to-fab': director.selectTarget('fab'); director.launch(); hudUi.flash('🚀 DEPARTING TO FAB'); break
+      case 'place-suggested': {
+        const before = director.sphereProgress()
+        director.placeSegment('suggested')
+        const gain = director.sphereProgress() - before
+        hudUi.flash(gain > 0.01 ? `✓ COUNTERWEIGHT PLACED · +${gain.toFixed(1)}%` : '⚠ NO SPOT — TRY HASTY')
+        break
+      }
+      case 'place-hasty': {
+        const before = director.sphereProgress()
+        director.placeSegment('hasty')
+        const gain = director.sphereProgress() - before
+        hudUi.flash(gain > 0.01 ? `✓ SEGMENT PLACED · +${gain.toFixed(1)}%` : '⚠ PLACEMENT BLOCKED')
+        break
+      }
       case 'deselect': director.clearTarget(); break
       // Restart is a full page reload, NOT a soft in-place reset. This is
       // deliberate (amendment 15): the Sim keeps catastrophe/fabLost bodies in

@@ -70,6 +70,9 @@ export class Hud {
   private endScreen: HTMLDivElement
   private coach: HTMLDivElement
   private transit: HTMLDivElement
+  private toast: HTMLDivElement
+  private cardsSig = ''
+  private inspectorSig = ''
 
   private alertLines: string[] = []
   // Bodies currently in a red/critical band (event-tracked): the alarm is on
@@ -87,6 +90,19 @@ export class Hud {
   // bridge is optional so the Hud can be unit-constructed without a BridgeFrame;
   // in the real app main.ts always passes it so the alarm edge-glow works.
   constructor(root: HTMLElement, private bridge?: BridgeFrame) {
+    // Global button feedback: hover lifts, press depresses + brightens, and a
+    // JS-added .cc-hit class flashes on click. Buttons are now stable DOM (see
+    // the signature guards in renderCards/renderInspector) so these actually show.
+    root.insertAdjacentHTML(
+      'beforeend',
+      `<style>
+        .cc-btn{transition:transform .08s,box-shadow .12s,filter .08s}
+        .cc-btn:hover{filter:brightness(1.25);transform:translateY(-1px)}
+        .cc-btn:active{transform:scale(.95);filter:brightness(1.6)}
+        .cc-hit{animation:ccflash .28s ease-out}
+        @keyframes ccflash{0%{filter:brightness(2.2)}100%{filter:brightness(1)}}
+      </style>`,
+    )
     root.insertAdjacentHTML(
       'beforeend',
       `<div id="cc-top" style="${PANEL}top:10px;left:50%;transform:translateX(-50%);display:flex;gap:22px;align-items:center;white-space:nowrap"></div>
@@ -96,7 +112,8 @@ export class Hud {
        <div id="cc-banner" style="${PANEL}top:118px;left:50%;transform:translateX(-50%);max-width:70vw;text-align:center;border-color:rgba(224,94,94,.7);color:${RED};font-size:15px;font-weight:bold;text-shadow:0 0 10px rgba(224,60,60,.6);display:none"></div>
        <div id="cc-end" class="clickable" style="${PANEL}top:50%;left:50%;transform:translate(-50%,-50%);text-align:center;padding:26px 34px;display:none"></div>
        <div id="cc-coach" style="${PANEL}top:58px;left:50%;transform:translateX(-50%);max-width:64vw;text-align:center;border-color:rgba(87,200,255,.45);color:${CYAN};font-size:13px;display:none"></div>
-       <div id="cc-transit" style="${PANEL}top:50%;left:50%;transform:translate(-50%,-50%);text-align:center;padding:16px 26px;border-color:rgba(87,200,255,.6);min-width:260px;display:none"></div>`,
+       <div id="cc-transit" style="${PANEL}top:50%;left:50%;transform:translate(-50%,-50%);text-align:center;padding:16px 26px;border-color:rgba(87,200,255,.6);min-width:260px;display:none"></div>
+       <div id="cc-toast" style="${PANEL}bottom:150px;left:50%;transform:translateX(-50%);text-align:center;font-weight:bold;font-size:15px;border-color:rgba(87,200,255,.7);color:${CYAN};text-shadow:0 0 10px ${CYAN}88;display:none"></div>`,
     )
     this.top = root.querySelector('#cc-top')!
     this.inspector = root.querySelector('#cc-inspector')!
@@ -106,6 +123,18 @@ export class Hud {
     this.endScreen = root.querySelector('#cc-end')!
     this.coach = root.querySelector('#cc-coach')!
     this.transit = root.querySelector('#cc-transit')!
+    this.toast = root.querySelector('#cc-toast')!
+  }
+
+  // Brief centre-screen confirmation of a player action ("▸ DEPARTING", etc.).
+  private toastHideAt = 0
+  flash(msg: string): void {
+    this.toast.textContent = msg
+    this.toast.style.display = 'block'
+    this.toast.classList.remove('cc-hit')
+    void this.toast.offsetWidth // restart the flash animation
+    this.toast.classList.add('cc-hit')
+    this.toastHideAt = performance.now() + 1100
   }
 
   // The single most useful "what do I do next" line, by game state. Keeps a
@@ -132,9 +161,17 @@ export class Hud {
 
   // Delegate every data-id button/element click in the HUD to onChoice.
   bindClicks(root: HTMLElement): void {
-    root.addEventListener('click', (e) => {
+    // Use pointerdown, not click: it fires instantly on press (no wait for
+    // mouseup) so the action feels immediate, and it can't be dropped by a
+    // button rebuild between down and up.
+    root.addEventListener('pointerdown', (e) => {
       const el = (e.target as HTMLElement).closest('[data-id]') as HTMLElement | null
-      if (el) this.onChoice(el.dataset.id!)
+      if (!el) return
+      // Instant visual pop on the pressed button.
+      el.classList.remove('cc-hit')
+      void el.offsetWidth
+      el.classList.add('cc-hit')
+      this.onChoice(el.dataset.id!)
     })
   }
 
@@ -145,11 +182,13 @@ export class Hud {
     return `<span style="opacity:.5">STANDARD</span>`
   }
 
-  private card(id: string, color: string, title: string, sub: string): string {
+  private card(id: string, color: string, title: string, sub: string, active = false): string {
+    const glow = active ? `box-shadow:0 0 0 2px ${color},0 0 16px ${color};` : ''
+    const tag = active ? ` <span style="font-size:10px">● ACTIVE</span>` : ''
     return (
-      `<button class="clickable" data-id="${id}" style="${PANEL}position:static;border-color:${color};` +
-      `cursor:pointer;min-width:158px;text-align:left;transition:box-shadow .15s">` +
-      `<div style="color:${color};font-weight:bold;text-shadow:0 0 8px ${color}88">${title}</div>` +
+      `<button class="clickable cc-btn" data-id="${id}" style="${PANEL}position:static;border-color:${color};${glow}` +
+      `cursor:pointer;min-width:158px;text-align:left">` +
+      `<div style="color:${color};font-weight:bold;text-shadow:0 0 8px ${color}88">${title}${tag}</div>` +
       `<div style="opacity:.7;font-size:11px;margin-top:3px">${sub}</div></button>`
     )
   }
@@ -164,6 +203,10 @@ export class Hud {
     this.renderTransit(d)
     this.renderCoach(d)
     this.renderEnd(d)
+    if (this.toastHideAt && performance.now() > this.toastHideAt) {
+      this.toast.style.display = 'none'
+      this.toastHideAt = 0
+    }
     this.bridge?.setAlarm(this.alarmLatched || this.redBodies.size > 0)
   }
 
@@ -265,63 +308,93 @@ export class Hud {
       this.inspector.style.display = 'none'
       return
     }
-    const spent = ((1 - body.mass / body.m0) * 100).toFixed(1)
-    // heldBand throws for untracked bodies (sun/ship/fab); guard on parentName.
-    let stability = '<span style="opacity:.5">—</span>'
-    if (body.parentName && body.kind !== 'ship' && body.kind !== 'fab') {
-      const band = d.sim.tracker.heldBand(name)
-      stability = `<span style="color:${BAND_COLOR[band]}">${band.toUpperCase()}</span>`
-    }
+    this.inspector.style.display = 'block'
     const comp = COMPOSITION[name]
     const active = d.state === 'mining' ? d.activeExtraction() : null
-    this.inspector.style.display = 'block'
-    // ✕ deselect only in orrery (before committing a course); mining is committed.
-    const deselect =
-      d.state === 'orrery'
-        ? `<button class="clickable" data-id="deselect" title="deselect" style="${PANEL}position:absolute;top:8px;right:8px;` +
-          `padding:0 7px;line-height:20px;border-color:${CYAN};color:${CYAN};cursor:pointer">✕</button>`
-        : ''
-    this.inspector.innerHTML =
-      deselect +
-      `<div style="color:${CYAN};font-weight:bold;letter-spacing:1px">◈ ${name.toUpperCase()}</div>` +
-      `<div style="margin:4px 0 6px">${this.riskBadge(d.bodyRisk(name))}</div>` +
-      (comp ? `<div style="opacity:.6;font-size:11px">composition ${comp}</div>` : '') +
-      `<div style="opacity:.75;margin-top:4px">mass extracted <b>${spent}%</b></div>` +
-      `<div style="opacity:.75">stability ${stability}</div>` +
-      (active ? `<div style="color:${CYAN};opacity:.85;margin-top:4px">▸ ${active.toUpperCase()} ENGAGED</div>` : '') +
-      (d.state === 'orrery'
-        ? `<button class="clickable" data-id="launch" style="${PANEL}position:static;display:block;width:100%;margin-top:10px;` +
-          `border-color:${CYAN};color:${CYAN};cursor:pointer;text-align:center">▸ PLOT COURSE &amp; LAUNCH</button>`
-        : '') +
-      (d.state === 'orrery' && d.cargo > 0
-        ? `<button class="clickable" data-id="to-fab" style="${PANEL}position:static;display:block;width:100%;margin-top:6px;` +
-          `border-color:${GOLD};color:${GOLD};cursor:pointer;text-align:center">▸ DELIVER TO FAB</button>`
-        : '')
+    // Signature guard: rebuild the panel (and its buttons) only when the button
+    // SET / structural content changes — never every frame — so a click can't be
+    // dropped by an innerHTML rebuild mid-press. Volatile numbers (mass %,
+    // stability band) live in child spans updated below without a rebuild.
+    const sig = `${name}|${d.state}|${d.cargo > 0}|${d.bodyRisk(name)}|${active}`
+    if (sig !== this.inspectorSig) {
+      this.inspectorSig = sig
+      const deselect =
+        d.state === 'orrery'
+          ? `<button class="clickable cc-btn" data-id="deselect" title="deselect" style="${PANEL}position:absolute;top:8px;right:8px;` +
+            `padding:0 7px;line-height:20px;border-color:${CYAN};color:${CYAN};cursor:pointer">✕</button>`
+          : ''
+      this.inspector.innerHTML =
+        deselect +
+        `<div style="color:${CYAN};font-weight:bold;letter-spacing:1px">◈ ${name.toUpperCase()}</div>` +
+        `<div style="margin:4px 0 6px">${this.riskBadge(d.bodyRisk(name))}</div>` +
+        (comp ? `<div style="opacity:.6;font-size:11px">composition ${comp}</div>` : '') +
+        `<div style="opacity:.75;margin-top:4px">mass extracted <b id="cc-insp-spent">—</b></div>` +
+        `<div style="opacity:.75">stability <span id="cc-insp-stab">—</span></div>` +
+        (active ? `<div style="color:${CYAN};opacity:.85;margin-top:4px">▸ ${active.toUpperCase()} ENGAGED</div>` : '') +
+        (d.state === 'orrery'
+          ? `<button class="clickable cc-btn" data-id="launch" style="${PANEL}position:static;display:block;width:100%;margin-top:10px;` +
+            `border-color:${CYAN};color:${CYAN};cursor:pointer;text-align:center">▸ PLOT COURSE &amp; LAUNCH</button>`
+          : '') +
+        (d.state === 'orrery' && d.cargo > 0
+          ? `<button class="clickable cc-btn" data-id="to-fab" style="${PANEL}position:static;display:block;width:100%;margin-top:6px;` +
+            `border-color:${GOLD};color:${GOLD};cursor:pointer;text-align:center">▸ DELIVER TO FAB</button>`
+          : '')
+    }
+    // Volatile numbers, updated without rebuilding the buttons.
+    const spentEl = this.inspector.querySelector('#cc-insp-spent')
+    if (spentEl) spentEl.textContent = `${((1 - body.mass / body.m0) * 100).toFixed(1)}%`
+    const stabEl = this.inspector.querySelector('#cc-insp-stab') as HTMLElement | null
+    if (stabEl) {
+      if (body.parentName && body.kind !== 'ship' && body.kind !== 'fab') {
+        const band = d.sim.tracker.heldBand(name)
+        stabEl.textContent = band.toUpperCase()
+        stabEl.style.color = BAND_COLOR[band]
+      } else {
+        stabEl.textContent = '—'
+        stabEl.style.color = ''
+      }
+    }
   }
 
   private renderCards(d: Director): void {
-    if (d.state === 'transit') {
-      this.cards.innerHTML = this.card(
-        'burn',
-        CYAN,
-        '🔥 SLINGSHOT BURN',
-        `arrive sooner · transit ${d.transitRemaining().toFixed(0)}s`,
-      )
-    } else if (d.state === 'mining') {
-      this.cards.innerHTML =
-        this.card('strip', AMBER, '⛏ STRIP BLAST', 'fast · HIGH wobble ▲▲▲') +
-        this.card('lattice', GREEN, '⛏ LATTICE BORE', 'slow · LOW wobble ▲') +
-        (d.cargo > 0 ? this.card('slag', CYAN, '↩ RETURN SLAG', 'give cargo back · heal orbit') : '') +
-        this.card('to-fab', INK, '🚀 DEPART TO FAB', 'deliver cargo')
-    } else if (d.state === 'constructing') {
-      const secs = d.decisionRemaining()
-      this.cards.innerHTML =
-        `<div style="${PANEL}position:static;border-color:${RED};color:${RED};display:flex;align-items:center;` +
-        `font-size:16px;font-weight:bold;text-shadow:0 0 10px ${RED}66">DECISION ${secs.toFixed(1)}s</div>` +
-        this.card('place-suggested', GREEN, '⬡ COUNTERWEIGHT PLACEMENT', 'stabilizes worst orbit') +
-        this.card('place-hasty', AMBER, '⬡ HASTY PLACEMENT', 'instant · no rebalance value')
-    } else {
-      this.cards.innerHTML = ''
+    // CRITICAL: only rebuild the button DOM when the button SET changes, never
+    // every frame — a click that spanned a frame's innerHTML rebuild used to be
+    // silently dropped (buttons destroyed mid-press). Volatile numbers (the
+    // transit/decision countdowns) update via a stable child span instead.
+    const mode = d.activeExtraction()
+    const sig = `${d.state}|${mode}|${d.cargo > 0}`
+    if (sig !== this.cardsSig) {
+      this.cardsSig = sig
+      if (d.state === 'transit') {
+        this.cards.innerHTML = this.card(
+          'burn',
+          CYAN,
+          '🔥 SLINGSHOT BURN',
+          'arrive sooner · <span id="cc-cardtimer"></span>',
+        )
+      } else if (d.state === 'mining') {
+        this.cards.innerHTML =
+          this.card('strip', AMBER, '⛏ STRIP BLAST', 'fast · HIGH wobble ▲▲▲', mode === 'strip') +
+          this.card('lattice', GREEN, '⛏ LATTICE BORE', 'slow · LOW wobble ▲', mode === 'lattice') +
+          (d.cargo > 0
+            ? this.card('slag', CYAN, '↩ RETURN SLAG', 'give cargo back · heal orbit', mode === 'slag')
+            : '') +
+          this.card('to-fab', INK, '🚀 DEPART TO FAB', 'stop mining · deliver cargo')
+      } else if (d.state === 'constructing') {
+        this.cards.innerHTML =
+          `<div style="${PANEL}position:static;border-color:${RED};color:${RED};display:flex;align-items:center;` +
+          `font-size:16px;font-weight:bold;text-shadow:0 0 10px ${RED}66">DECISION <span id="cc-cardtimer" style="margin-left:6px"></span></div>` +
+          this.card('place-suggested', GREEN, '⬡ COUNTERWEIGHT PLACEMENT', 'stabilizes worst orbit') +
+          this.card('place-hasty', AMBER, '⬡ HASTY PLACEMENT', 'instant · no rebalance value')
+      } else {
+        this.cards.innerHTML = ''
+      }
+    }
+    // Volatile countdown text — updated WITHOUT touching the buttons.
+    const timer = this.cards.querySelector('#cc-cardtimer')
+    if (timer) {
+      if (d.state === 'transit') timer.textContent = `${d.transitRemaining().toFixed(1)}s`
+      else if (d.state === 'constructing') timer.textContent = `${d.decisionRemaining().toFixed(1)}s`
     }
   }
 
