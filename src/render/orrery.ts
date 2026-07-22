@@ -87,6 +87,10 @@ export class Orrery {
   // immediate feedback in the 3D scene (not just the side panel).
   private selectionRing: THREE.Mesh
   private selected: string | null = null
+  // A big band-colored beacon around the body the HUD is telling the player to
+  // reach (a wobbling moon) so a tiny moon in a cluster is easy to FIND.
+  private attentionRing: THREE.Mesh
+  private attention: string | null = null
   private harmonyRing: THREE.Mesh
   // Loss cinematic ("cataclysm"): planets spiral into the sun, explode, and the
   // sun goes supernova. Purely visual, time-driven — the sim is already stopped.
@@ -119,6 +123,15 @@ export class Orrery {
     )
     this.selectionRing.visible = false
     this.group.add(this.selectionRing)
+
+    // Attention beacon: a bold ring re-colored to the danger band each frame,
+    // strongly pulsing, sized generously so a tiny moon is easy to spot.
+    this.attentionRing = new THREE.Mesh(
+      new THREE.TorusGeometry(1, 0.16, 10, 56),
+      new THREE.MeshBasicMaterial({ color: 0xe05e5e, transparent: true, opacity: 0.9, blending: THREE.AdditiveBlending, depthWrite: false }),
+    )
+    this.attentionRing.visible = false
+    this.group.add(this.attentionRing)
 
     // Sun light + low ambient so textured planets read with a lit day side.
     // High intensity, gentle decay (1.2) so both the inner planets (r~38) and
@@ -363,11 +376,34 @@ export class Orrery {
     } else {
       this.selectionRing.visible = false
     }
+
+    // Attention beacon: a big, hard-pulsing ring in the danger band's colour on
+    // the body the HUD is telling the player to reach, so it's easy to FIND.
+    const att = this.attention ? this.sim.bodies.find((b) => b.name === this.attention) : undefined
+    if (att && att.parentName && att.kind !== 'ship' && att.kind !== 'fab') {
+      const ring = this.attentionRing
+      ring.visible = true
+      ring.position.set(att.pos.x * POS_SCALE, att.pos.y * POS_SCALE, 0)
+      const pulse = 0.5 + 0.5 * Math.abs(Math.sin(time * 3.5))
+      ring.scale.setScalar(Math.max(att.radius * 4, 9) * (0.8 + 0.35 * pulse))
+      const m = ring.material as THREE.MeshBasicMaterial
+      const band = this.sim.tracker.heldBand(att.name)
+      m.color.set(BAND_COLOR[band === 'green' ? 'amber' : band])
+      m.opacity = 0.45 + 0.55 * pulse
+    } else {
+      this.attentionRing.visible = false
+    }
   }
 
   // Tell the orrery which body is selected (drives the reticle). null = none.
   setSelected(name: string | null): void {
     this.selected = name
+  }
+
+  // Tell the orrery which body needs attention (a wobbling moon the HUD is
+  // pointing the player toward). null = none.
+  setAttention(name: string | null): void {
+    this.attention = name
   }
 
   // ---- loss cinematic -----------------------------------------------------

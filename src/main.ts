@@ -171,6 +171,8 @@ if (!webglAvailable()) {
       orrery.playCataclysm(t / 1000, r.camera)
     } else {
       orrery.setSelected(director.currentTarget())
+      // Beacon the wobbling moon the HUD is pointing at, so it's easy to find.
+      orrery.setAttention(hudUi.attentionBody())
       orrery.update(t / 1000, r.camera)
     }
     r.render()

@@ -128,9 +128,15 @@ export class Hud {
     this.toast = root.querySelector('#cc-toast')!
   }
 
+  // The body the danger guidance is currently pointing at (for the orrery beacon).
+  private attentionName: string | null = null
+  attentionBody(): string | null {
+    return this.attentionName
+  }
+
   // If any body is wobbling (amber+), return the WORST one with an actionable
   // instruction tailored to what the player can do right now. null = all calm.
-  private dangerGuidance(d: Director): { color: string; text: string } | null {
+  private dangerGuidance(d: Director): { name: string; color: string; text: string } | null {
     const order: Record<string, number> = { green: 0, amber: 1, red: 2, critical: 3 }
     let worst: { name: string; band: string } | null = null
     for (const b of d.sim.bodies) {
@@ -150,7 +156,7 @@ export class Hud {
     else if (d.state === 'orrery') action = `click ${N}, PLOT COURSE, mine a little, then DEPART & build a ⬡ COUNTERWEIGHT`
     else action = `get to the fab and build a ⬡ COUNTERWEIGHT to save it`
     const urgency = worst.band === 'critical' ? ' — ACT NOW or lose it!' : ''
-    return { color: BAND_COLOR[worst.band as 'amber' | 'red' | 'critical'], text: `⚠ ${N} orbit is ${worst.band.toUpperCase()} — ${action}${urgency}` }
+    return { name: worst.name, color: BAND_COLOR[worst.band as 'amber' | 'red' | 'critical'], text: `⚠ ${N} orbit is ${worst.band.toUpperCase()} — ${action}${urgency}` }
   }
 
   // Brief centre-screen confirmation of a player action ("▸ DEPARTING", etc.).
@@ -242,6 +248,7 @@ export class Hud {
     // Danger guidance wins the slot when a moon is in trouble — it's the more
     // urgent message. The gentle next-step coach shows only when all is calm.
     const danger = over ? null : this.dangerGuidance(d)
+    this.attentionName = danger ? danger.name : null
     if (danger) {
       this.coach.style.display = 'none'
       this.danger.style.display = 'block'
