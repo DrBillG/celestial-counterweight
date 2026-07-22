@@ -69,6 +69,7 @@ export class Hud {
   private banner: HTMLDivElement
   private endScreen: HTMLDivElement
   private coach: HTMLDivElement
+  private danger: HTMLDivElement
   private transit: HTMLDivElement
   private toast: HTMLDivElement
   private cardsSig = ''
@@ -112,6 +113,7 @@ export class Hud {
        <div id="cc-banner" style="${PANEL}top:118px;left:50%;transform:translateX(-50%);max-width:70vw;text-align:center;border-color:rgba(224,94,94,.7);color:${RED};font-size:15px;font-weight:bold;text-shadow:0 0 10px rgba(224,60,60,.6);display:none"></div>
        <div id="cc-end" class="clickable" style="${PANEL}top:50%;left:50%;transform:translate(-50%,-50%);text-align:center;padding:26px 34px;display:none"></div>
        <div id="cc-coach" style="${PANEL}top:58px;left:50%;transform:translateX(-50%);max-width:64vw;text-align:center;border-color:rgba(87,200,255,.45);color:${CYAN};font-size:13px;display:none"></div>
+       <div id="cc-danger" style="${PANEL}top:58px;left:50%;transform:translateX(-50%);max-width:70vw;text-align:center;font-weight:bold;font-size:14px;display:none"></div>
        <div id="cc-transit" style="${PANEL}top:50%;left:50%;transform:translate(-50%,-50%);text-align:center;padding:16px 26px;border-color:rgba(87,200,255,.6);min-width:260px;display:none"></div>
        <div id="cc-toast" style="${PANEL}bottom:150px;left:50%;transform:translateX(-50%);text-align:center;font-weight:bold;font-size:15px;border-color:rgba(87,200,255,.7);color:${CYAN};text-shadow:0 0 10px ${CYAN}88;display:none"></div>`,
     )
@@ -122,8 +124,31 @@ export class Hud {
     this.banner = root.querySelector('#cc-banner')!
     this.endScreen = root.querySelector('#cc-end')!
     this.coach = root.querySelector('#cc-coach')!
+    this.danger = root.querySelector('#cc-danger')!
     this.transit = root.querySelector('#cc-transit')!
     this.toast = root.querySelector('#cc-toast')!
+  }
+
+  // If any body is wobbling (amber+), return the WORST one with an actionable
+  // instruction tailored to what the player can do right now. null = all calm.
+  private dangerGuidance(d: Director): { color: string; text: string } | null {
+    const order: Record<string, number> = { green: 0, amber: 1, red: 2, critical: 3 }
+    let worst: { name: string; band: string } | null = null
+    for (const b of d.sim.bodies) {
+      if (!b.parentName || b.kind === 'ship' || b.kind === 'fab') continue
+      const band = d.sim.tracker.heldBand(b.name)
+      if (band === 'green') continue
+      if (!worst || order[band] > order[worst.band]) worst = { name: b.name, band }
+    }
+    if (!worst) return null
+    const N = worst.name.toUpperCase()
+    const atThisBody = d.state === 'mining' && d.currentTarget() === worst.name
+    let action: string
+    if (atThisBody && d.cargo > 0) action = 'press ↩ RETURN SLAG to hold it, or 🚀 DEPART and build a counterweight'
+    else if (atThisBody) action = '🚀 DEPART and build a counterweight to save it'
+    else action = 'deliver cargo at the fab and press ⬡ COUNTERWEIGHT PLACEMENT to steady it'
+    const urgency = worst.band === 'critical' ? ' — ACT NOW or lose it!' : ''
+    return { color: BAND_COLOR[worst.band as 'amber' | 'red' | 'critical'], text: `⚠ ${N} orbit is ${worst.band.toUpperCase()} — ${action}${urgency}` }
   }
 
   // Brief centre-screen confirmation of a player action ("▸ DEPARTING", etc.).
@@ -201,7 +226,7 @@ export class Hud {
     this.renderAlerts()
     this.renderBanner()
     this.renderTransit(d)
-    this.renderCoach(d)
+    this.renderCoachAndDanger(d)
     this.renderEnd(d)
     if (this.toastHideAt && performance.now() > this.toastHideAt) {
       this.toast.style.display = 'none'
@@ -210,8 +235,22 @@ export class Hud {
     this.bridge?.setAlarm(this.alarmLatched || this.redBodies.size > 0)
   }
 
-  private renderCoach(d: Director): void {
-    const text = d.state === 'won' || d.state === 'lost' ? '' : this.coachText(d)
+  private renderCoachAndDanger(d: Director): void {
+    const over = d.state === 'won' || d.state === 'lost' || d.state === 'transit'
+    // Danger guidance wins the slot when a moon is in trouble — it's the more
+    // urgent message. The gentle next-step coach shows only when all is calm.
+    const danger = over ? null : this.dangerGuidance(d)
+    if (danger) {
+      this.coach.style.display = 'none'
+      this.danger.style.display = 'block'
+      this.danger.textContent = danger.text
+      this.danger.style.color = danger.color
+      this.danger.style.borderColor = danger.color + '99'
+      this.danger.style.textShadow = `0 0 10px ${danger.color}66`
+      return
+    }
+    this.danger.style.display = 'none'
+    const text = over ? '' : this.coachText(d)
     if (!text) {
       this.coach.style.display = 'none'
       return
