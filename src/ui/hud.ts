@@ -35,7 +35,6 @@ const GOLD = '#ffd75e'
 const GREEN = '#4a9d6f'
 const AMBER = '#e0b34e'
 const RED = '#e05e5e'
-const INK = '#cfe3ff'
 
 const PANEL =
   'position:absolute;background:rgba(10,16,32,.86);border:1px solid rgba(87,200,255,.35);' +
@@ -142,11 +141,14 @@ export class Hud {
     }
     if (!worst) return null
     const N = worst.name.toUpperCase()
-    const atThisBody = d.state === 'mining' && d.currentTarget() === worst.name
+    // A COUNTERWEIGHT (deliver cargo to the fab → place it) is the real rescue —
+    // it holds a wobbling orbit at amber and even at red. It auto-targets the
+    // worst body, so the player just needs to get to the fab with cargo.
     let action: string
-    if (atThisBody && d.cargo > 0) action = 'press ↩ RETURN SLAG to hold it, or 🚀 DEPART and build a counterweight'
-    else if (atThisBody) action = '🚀 DEPART and build a counterweight to save it'
-    else action = 'deliver cargo at the fab and press ⬡ COUNTERWEIGHT PLACEMENT to steady it'
+    if (d.state === 'mining') action = `🚀 DEPART TO FAB, then ⬡ COUNTERWEIGHT PLACEMENT to save it`
+    else if (d.cargo > 0) action = `🚀 DELIVER TO FAB (below), then ⬡ COUNTERWEIGHT PLACEMENT to save it`
+    else if (d.state === 'orrery') action = `click ${N}, PLOT COURSE, mine a little, then DEPART & build a ⬡ COUNTERWEIGHT`
+    else action = `get to the fab and build a ⬡ COUNTERWEIGHT to save it`
     const urgency = worst.band === 'critical' ? ' — ACT NOW or lose it!' : ''
     return { color: BAND_COLOR[worst.band as 'amber' | 'red' | 'critical'], text: `⚠ ${N} orbit is ${worst.band.toUpperCase()} — ${action}${urgency}` }
   }
@@ -412,13 +414,25 @@ export class Hud {
           'arrive sooner · <span id="cc-cardtimer"></span>',
         )
       } else if (d.state === 'mining') {
+        // The rescue is the COUNTERWEIGHT (DEPART TO FAB → place), so that card is
+        // always here. RETURN SLAG gives cargo back (heals the mass budget) and
+        // only shows when you have cargo to return.
         this.cards.innerHTML =
           this.card('strip', AMBER, '⛏ STRIP BLAST', 'fast · HIGH wobble ▲▲▲', mode === 'strip') +
           this.card('lattice', GREEN, '⛏ LATTICE BORE', 'slow · LOW wobble ▲', mode === 'lattice') +
           (d.cargo > 0
-            ? this.card('slag', CYAN, '↩ RETURN SLAG', 'give cargo back · heal orbit', mode === 'slag')
+            ? this.card('slag', CYAN, '↩ RETURN SLAG', 'give cargo back to it', mode === 'slag')
             : '') +
-          this.card('to-fab', INK, '🚀 DEPART TO FAB', 'stop mining · deliver cargo')
+          this.card('to-fab', GOLD, '🚀 DEPART TO FAB', 'RESCUE: build a counterweight')
+      } else if (d.state === 'orrery' && d.cargo > 0) {
+        // Persistent path to the fab from the map view (build a counterweight /
+        // add to the sphere) even with no body selected.
+        this.cards.innerHTML = this.card(
+          'to-fab',
+          GOLD,
+          '🚀 DELIVER TO FAB',
+          `build a counterweight · cargo ${d.cargo.toFixed(3)}`,
+        )
       } else if (d.state === 'constructing') {
         this.cards.innerHTML =
           `<div style="${PANEL}position:static;border-color:${RED};color:${RED};display:flex;align-items:center;` +
