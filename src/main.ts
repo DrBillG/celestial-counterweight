@@ -5,6 +5,7 @@ import { Orrery } from './render/orrery'
 import { CameraDirector } from './render/cameraDirector'
 import { BridgeFrame } from './render/bridge'
 import { Director } from './game/director'
+import { getLevel, winTargetForLevel, recordWin, resetProgress } from './game/difficulty'
 import { Hud } from './ui/hud'
 import { GameAudio } from './audio/audio'
 
@@ -20,7 +21,11 @@ if (!webglAvailable()) {
     '</div>'
 } else {
   const r = new Renderer(app)
-  const director = new Director()
+  // Difficulty ladder: the player's persisted level sets the win target. A
+  // fresh browser is level 1 (the shipped, proven-honest balance); each win
+  // (latched below) advances it, and restart is a full reload that re-reads it.
+  const level = getLevel()
+  const director = new Director(undefined, winTargetForLevel(level))
   // `let` (not const): the perf autoscaler below rebuilds the sky at a lower
   // quality tier if frames stay slow.
   let sky = new Sky()
@@ -38,6 +43,7 @@ if (!webglAvailable()) {
   // end screens. Driven each frame by update(director, events). It owns the
   // bridge alarm edge-glow (passed in), so main never toggles setAlarm itself.
   const hudUi = new Hud(hud, bridgeFrame)
+  hudUi.setLevel(level)
   hudUi.bindClicks(hud)
 
   // Synthesized audio + gamepad haptics (Task 15). Pure event-stream consumer:
@@ -79,6 +85,8 @@ if (!webglAvailable()) {
       // dead-body meshes and stale GPU buffers. reload() rebuilds the whole
       // scene cleanly and sidesteps both for v1.
       case 'restart': location.reload(); break
+      // Reset the difficulty ladder to Level 1, then reload into it.
+      case 'reset': resetProgress(); location.reload(); break
     }
   }
 
@@ -133,6 +141,7 @@ if (!webglAvailable()) {
   let bloomReduced = false
   let lostAt = -1 // perf ms when the loss cinematic began (one-time setup latch)
   let novaFired = false
+  let winRecorded = false // fire recordWin() exactly once when the run is won
 
   let last = performance.now()
   const frame = (t: number) => {
@@ -155,6 +164,14 @@ if (!webglAvailable()) {
     cameraDirector.update(dt)
     bridgeFrame.setVisible(cameraDirector.isBridge())
     sky.update(t / 1000, director.sim.harmony())
+    if (director.state === 'won' && !winRecorded) {
+      // Advance the difficulty ladder ONCE. recordWin() persists level+1 so the
+      // next run (a full reload via the restart button) is harder; the HUD win
+      // screen shows the level cleared and what's unlocked next.
+      winRecorded = true
+      const next = recordWin()
+      hudUi.setWinResult(level, next)
+    }
     if (director.state === 'lost') {
       // Loss cinematic: the orrery takes over — planets spiral into the sun and
       // it goes supernova. One-time setup: crank bloom for the blowout + a boom.

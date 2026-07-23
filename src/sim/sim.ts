@@ -11,7 +11,7 @@ import {
 } from './stability'
 import { dist, norm, sub, v, type Vec } from './vec'
 import {
-  G, DT, RUNAWAY_ACCEL, EJECT_RADIUS, ASSIST_K, ASSIST_MAX, ASSIST_RANGE, ENV_MARGIN,
+  G, DT, RUNAWAY_ACCEL, LOOSE_MOON_RUNAWAY_SCALE, EJECT_RADIUS, ASSIST_K, ASSIST_MAX, ASSIST_RANGE, ENV_MARGIN,
   SHIP_ASSIST, DAMP_RATIO, ASSIST_SNAPSHOT_TU, FAB_MASS_RATIO_MAX, FAB_MIN_SEPARATION,
 } from '../constants'
 
@@ -312,8 +312,11 @@ export class Sim {
       const sign = d >= b.rNom ? 1 : -1
       // Retuned ×100 -> ×10 (coordinator fix #2): ~0.47x central gravity at
       // the critical threshold — still positive-feedback compounding, but
-      // rescuable early via station-keeping assist (Task 8).
-      const mag = RUNAWAY_ACCEL * dev * 10 * sign
+      // rescuable early via station-keeping assist (Task 8). Loosely-bound
+      // moons (jupiter trio) get a gentler cascade so a Return-Slag hold has
+      // time to catch them — see LOOSE_MOON_RUNAWAY_SCALE.
+      const runawayScale = b.looseMoon ? LOOSE_MOON_RUNAWAY_SCALE : 1
+      const mag = RUNAWAY_ACCEL * dev * 10 * sign * runawayScale
       ax += radial.x * mag
       ay += radial.y * mag
     }

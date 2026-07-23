@@ -28,6 +28,7 @@
 //    over). main.ts does NOT also toggle setAlarm — single owner, no fighting.
 import type { Director, GameEvent, BodyRisk } from '../game/director'
 import type { BridgeFrame } from '../render/bridge'
+import { plateauLevel } from '../game/difficulty'
 
 // Holographic palette.
 const CYAN = '#57c8ff'
@@ -83,9 +84,28 @@ export class Hud {
   private bannerUntil = 0
   private lastCause = ''
 
+  // Difficulty ladder (src/game/difficulty.ts): the level being played (top bar)
+  // and, once the run is won, the cleared/next levels for the win screen copy.
+  // Set by main.ts via setLevel()/setWinResult().
+  private level = 1
+  private winCleared = 0
+  private winNext = 0
+
   // Player-action callback — main.ts wires this to director actions. Set by
   // main after construction; bindClicks() delegates all button clicks here.
   onChoice: (id: string) => void = () => {}
+
+  // The current difficulty level (shown in the top bar). Called once at startup.
+  setLevel(level: number): void {
+    this.level = level
+  }
+
+  // Record the win outcome for the end-screen copy: the level just cleared and
+  // the (harder) level now unlocked. Called once by main.ts's win latch.
+  setWinResult(cleared: number, next: number): void {
+    this.winCleared = cleared
+    this.winNext = next
+  }
 
   // bridge is optional so the Hud can be unit-constructed without a BridgeFrame;
   // in the real app main.ts always passes it so the alarm edge-glow works.
@@ -105,7 +125,7 @@ export class Hud {
     )
     root.insertAdjacentHTML(
       'beforeend',
-      `<div id="cc-top" style="${PANEL}top:10px;left:50%;transform:translateX(-50%);display:flex;gap:22px;align-items:center;white-space:nowrap"></div>
+      `<div id="cc-top" style="${PANEL}top:10px;left:50%;transform:translateX(-50%);display:flex;gap:15px;align-items:center;white-space:nowrap;letter-spacing:0;max-width:98vw"></div>
        <div id="cc-inspector" class="clickable" style="${PANEL}top:64px;right:12px;width:236px;display:none"></div>
        <div id="cc-cards" class="clickable" style="position:absolute;bottom:26px;left:50%;transform:translateX(-50%);display:flex;gap:14px;align-items:stretch"></div>
        <div id="cc-alerts" style="${PANEL}bottom:26px;right:12px;width:236px;border-color:rgba(224,94,94,.55);display:none"></div>
@@ -147,6 +167,25 @@ export class Hud {
     }
     if (!worst) return null
     const N = worst.name.toUpperCase()
+    const urgency = worst.band === 'critical' ? ' — ACT NOW or lose it!' : ''
+
+    // Loosely-bound moons (jupiter trio) can't be held by a fixed counterweight
+    // — they fall radially out of its range. The ONLY rescue is RETURN SLAG:
+    // station the ship ON the moon (it tracks the moon) and give back ALL the
+    // cargo, which re-circularizes the orbit. Net yield is zero — you mine them
+    // for the tightrope, not the mass.
+    if (d.isLooseMoon(worst.name)) {
+      let action: string
+      if (d.state === 'mining' && d.currentTarget() === worst.name) {
+        action = `press ↩ RETURN SLAG and give back ALL cargo to stabilize it`
+      } else if (d.state === 'mining') {
+        action = `finish here, then fly back to ${N} and ↩ RETURN SLAG all cargo`
+      } else {
+        action = `fly to ${N}, then ↩ RETURN SLAG all cargo to save it (a counterweight can't hold it)`
+      }
+      return { name: worst.name, color: BAND_COLOR[worst.band as 'amber' | 'red' | 'critical'], text: `⚠ ${N} is ${worst.band.toUpperCase()} — barely bound: ${action}${urgency}` }
+    }
+
     // A COUNTERWEIGHT (deliver cargo to the fab → place it) is the real rescue —
     // it holds a wobbling orbit at amber and even at red. It auto-targets the
     // worst body, so the player just needs to get to the fab with cargo.
@@ -155,7 +194,6 @@ export class Hud {
     else if (d.cargo > 0) action = `🚀 DELIVER TO FAB (below), then ⬡ COUNTERWEIGHT PLACEMENT to save it`
     else if (d.state === 'orrery') action = `click ${N}, PLOT COURSE, mine a little, then DEPART & build a ⬡ COUNTERWEIGHT`
     else action = `get to the fab and build a ⬡ COUNTERWEIGHT to save it`
-    const urgency = worst.band === 'critical' ? ' — ACT NOW or lose it!' : ''
     return { name: worst.name, color: BAND_COLOR[worst.band as 'amber' | 'red' | 'critical'], text: `⚠ ${N} orbit is ${worst.band.toUpperCase()} — ${action}${urgency}` }
   }
 
@@ -181,10 +219,18 @@ export class Hud {
         return 'Press ▸ PLOT COURSE & LAUNCH to travel to the selected body.'
       case 'transit':
         return ''
-      case 'mining':
+      case 'mining': {
+        const t = d.currentTarget()
+        const loose = !!t && t !== 'fab' && d.isLooseMoon(t)
+        if (loose) {
+          if (d.cargo > 0) return `⚠ ${t!.toUpperCase()} is barely bound — press ↩ RETURN SLAG and give ALL cargo back to stabilize it (these moons yield nothing net).`
+          if (!d.activeExtraction()) return `⚠ ${t!.toUpperCase()} is fragile: a mining bite will destabilize it, and only ↩ RETURN SLAG can save it. Mine only if you want the tightrope.`
+          return 'Mining…'
+        }
         if (!d.activeExtraction()) return 'Press ⛏ LATTICE BORE to mine gently (STRIP BLAST is faster but risky).'
         if (d.cargo > 0) return 'Mining… press 🚀 DEPART TO FAB when you have enough cargo.'
         return 'Mining…'
+      }
       case 'constructing':
         return 'Press ⬡ COUNTERWEIGHT PLACEMENT before the timer runs out.'
       default:
@@ -306,9 +352,15 @@ export class Hud {
           break
         case 'riskWarning': {
           const body = ev.body.toUpperCase()
-          const moon = ev.body === 'mars' ? ' — mining its moon Phobos is unrecoverable' : ''
-          this.pushAlert(`⚠ ${body} FRAGILE`, RED)
-          this.banner.innerHTML = `⚠ ${body} IS UNSTABLE${moon}`
+          if (ev.risk === 'loose') {
+            // Jupiter trio: rescuable but net-zero. Warn + teach the Return-Slag save.
+            this.pushAlert(`⚠ ${body} BARELY BOUND`, AMBER)
+            this.banner.innerHTML = `⚠ ${body} IS BARELY BOUND — if you mine it, ↩ RETURN SLAG all cargo to stabilize it (yields nothing net)`
+          } else {
+            const moon = ev.body === 'mars' ? ' — mining its moon Phobos is unrecoverable' : ''
+            this.pushAlert(`⚠ ${body} FRAGILE`, RED)
+            this.banner.innerHTML = `⚠ ${body} IS UNSTABLE${moon}`
+          }
           this.bannerUntil = performance.now() + 5000
           break
         }
@@ -334,6 +386,7 @@ export class Hud {
     const hColor = h > 80 ? GREEN : h > 55 ? AMBER : RED
     const pct = Math.min(100, d.sphereProgress())
     this.top.innerHTML =
+      `<span style="color:#c9a6ff;text-shadow:0 0 8px #c9a6ff66;font-weight:bold">▲ LEVEL ${this.level}</span>` +
       `<span style="color:${GOLD};text-shadow:0 0 8px ${GOLD}66">◉ DYSON SPHERE ${pct.toFixed(1)}%` +
       `<span style="display:inline-block;width:80px;height:6px;margin-left:8px;vertical-align:middle;` +
       `background:rgba(255,255,255,.10);border-radius:3px;overflow:hidden;border:1px solid ${GOLD}55">` +
@@ -410,7 +463,9 @@ export class Hud {
     // silently dropped (buttons destroyed mid-press). Volatile numbers (the
     // transit/decision countdowns) update via a stable child span instead.
     const mode = d.activeExtraction()
-    const sig = `${d.state}|${mode}|${d.cargo > 0}`
+    const t = d.currentTarget()
+    const loose = d.state === 'mining' && !!t && t !== 'fab' && d.isLooseMoon(t)
+    const sig = `${d.state}|${mode}|${d.cargo > 0}|${loose}`
     if (sig !== this.cardsSig) {
       this.cardsSig = sig
       if (d.state === 'transit') {
@@ -421,16 +476,22 @@ export class Hud {
           'arrive sooner · <span id="cc-cardtimer"></span>',
         )
       } else if (d.state === 'mining') {
-        // The rescue is the COUNTERWEIGHT (DEPART TO FAB → place), so that card is
-        // always here. RETURN SLAG gives cargo back (heals the mass budget) and
-        // only shows when you have cargo to return.
+        // Normal moons: the rescue is a COUNTERWEIGHT (DEPART TO FAB → place).
+        // LOOSE moons (jupiter trio): a counterweight CAN'T hold them — the
+        // rescue is RETURN SLAG (station + give ALL cargo back). So for a loose
+        // moon we promote RETURN SLAG to the green "RESCUE" card and demote the
+        // DEPART card to a plain "add to sphere (won't rescue it)".
         this.cards.innerHTML =
           this.card('strip', AMBER, '⛏ STRIP BLAST', 'fast · HIGH wobble ▲▲▲', mode === 'strip') +
           this.card('lattice', GREEN, '⛏ LATTICE BORE', 'slow · LOW wobble ▲', mode === 'lattice') +
           (d.cargo > 0
-            ? this.card('slag', CYAN, '↩ RETURN SLAG', 'give cargo back to it', mode === 'slag')
+            ? loose
+              ? this.card('slag', GREEN, '↩ RETURN SLAG', 'RESCUE: give ALL cargo back', mode === 'slag')
+              : this.card('slag', CYAN, '↩ RETURN SLAG', 'give cargo back to it', mode === 'slag')
             : '') +
-          this.card('to-fab', GOLD, '🚀 DEPART TO FAB', 'RESCUE: build a counterweight')
+          (loose
+            ? this.card('to-fab', GOLD, '🚀 DEPART TO FAB', "add cargo to sphere · won't rescue it")
+            : this.card('to-fab', GOLD, '🚀 DEPART TO FAB', 'RESCUE: build a counterweight'))
       } else if (d.state === 'orrery' && d.cargo > 0) {
         // Persistent path to the fab from the map view (build a counterweight /
         // add to the sphere) even with no body selected.
@@ -482,10 +543,18 @@ export class Hud {
     }
     if (d.state === 'won') {
       this.endScreen.style.display = 'block'
+      const atMax = this.winNext > plateauLevel()
+      const ladder = atMax
+        ? `<div style="color:#c9a6ff;font-size:16px;font-weight:bold;margin-top:12px;text-shadow:0 0 10px #c9a6ff88">▲ LEVEL ${this.winCleared} — MAX DIFFICULTY held</div>` +
+          `<div style="font-size:12px;opacity:.8;margin-top:4px">You're pinning the system at its hardest. Keep the streak.</div>`
+        : `<div style="color:#c9a6ff;font-size:16px;font-weight:bold;margin-top:12px;text-shadow:0 0 10px #c9a6ff88">▲ LEVEL ${this.winCleared} CLEARED → LEVEL ${this.winNext}</div>` +
+          `<div style="font-size:12px;opacity:.8;margin-top:4px">Next run needs a bigger sphere. It gets harder from here.</div>`
       this.endScreen.innerHTML =
         `<div style="color:${GOLD};font-size:26px;text-shadow:0 0 16px ${GOLD}88">☀ SPHERE COMPLETE</div>` +
         `<div style="font-size:13px;opacity:.85;margin-top:8px">The system hums in balance.</div>` +
-        this.restartButton(GOLD)
+        ladder +
+        this.restartButton(GOLD, '↻ Next level') +
+        this.resetLink()
       return
     }
     // LOST: let the supernova cinematic play first — hold the panel back ~5.2s,
@@ -507,10 +576,19 @@ export class Hud {
       this.restartButton(RED)
   }
 
-  private restartButton(color: string): string {
+  private restartButton(color: string, label = '↻ Reload to play again'): string {
     return (
       `<button class="clickable" data-id="restart" style="${PANEL}position:static;display:inline-block;margin-top:16px;` +
-      `border-color:${color};color:${color};cursor:pointer">↻ Reload to play again</button>`
+      `border-color:${color};color:${color};cursor:pointer">${label}</button>`
+    )
+  }
+
+  // Small "start the ladder over" affordance on the win screen — resets the
+  // persisted level back to 1 (main.ts wires data-id="reset").
+  private resetLink(): string {
+    return (
+      `<div style="margin-top:12px"><button class="clickable" data-id="reset" style="background:none;border:none;` +
+      `color:#8fa6c8;font-size:11px;text-decoration:underline;cursor:pointer;opacity:.75">reset progress to Level 1</button></div>`
     )
   }
 }

@@ -10,6 +10,7 @@ interface Spec {
   mass: number
   radius: number // visual/collision radius
   minable?: boolean
+  looseMoon?: boolean // orbits outside parent Hill sphere (jupiter trio) — see Body.looseMoon
   phase: number  // starting angle (radians) — EXPLICIT for every body: determinism is a hard requirement
 }
 
@@ -76,9 +77,9 @@ const SPECS: Spec[] = [
   { name: 'mars',    kind: 'planet', parent: 'sun',     r: 104,  mass: 0.11, radius: 1.5, phase: 5.6007703765883, minable: true },
   { name: 'phobos',  kind: 'moon',   parent: 'mars',    r: 4,    mass: 0.004, radius: 0.4, minable: true, phase: 2.0 },
   { name: 'jupiter', kind: 'planet', parent: 'sun',     r: 175,  mass: 1.5,  radius: 5.5, phase: 0.7729674691607054 },
-  { name: 'io',      kind: 'moon',   parent: 'jupiter', r: 8,    mass: 0.0005, radius: 0.7, minable: true, phase: 0.8 },
-  { name: 'europa',  kind: 'moon',   parent: 'jupiter', r: 12,   mass: 0.0005, radius: 0.7, minable: true, phase: 2.9 },
-  { name: 'ganymede',kind: 'moon',   parent: 'jupiter', r: 20.5, mass: 0.0005, radius: 0.9, minable: true, phase: 5.0 },
+  { name: 'io',      kind: 'moon',   parent: 'jupiter', r: 8,    mass: 0.0005, radius: 0.7, minable: true, looseMoon: true, phase: 0.8 },
+  { name: 'europa',  kind: 'moon',   parent: 'jupiter', r: 12,   mass: 0.0005, radius: 0.7, minable: true, looseMoon: true, phase: 2.9 },
+  { name: 'ganymede',kind: 'moon',   parent: 'jupiter', r: 20.5, mass: 0.0005, radius: 0.9, minable: true, looseMoon: true, phase: 5.0 },
   { name: 'saturn',  kind: 'planet', parent: 'sun',     r: 255,  mass: 1.0,  radius: 4.8, phase: 2.0169372158879835 },
   { name: 'titan',   kind: 'moon',   parent: 'saturn',  r: 13,   mass: 0.023, radius: 0.9, minable: true, phase: 1.7 },
   { name: 'uranus',  kind: 'planet', parent: 'sun',     r: 292,  mass: 0.45, radius: 3.2, phase: 1.1342241661813397 },
@@ -104,7 +105,7 @@ export function buildSystem(): Body[] {
     // what the hierarchical integrator actually applies.
     const vCirc = circularSpeed(parent.mass, s.r)
     const vel = add(parent.vel, v(-Math.sin(s.phase) * vCirc, Math.cos(s.phase) * vCirc))
-    bodies.push(makeBody({ name: s.name, kind: s.kind, mass: s.mass, pos, vel, radius: s.radius, parentName: s.parent, rNom: s.r, minable: s.minable }))
+    bodies.push(makeBody({ name: s.name, kind: s.kind, mass: s.mass, pos, vel, radius: s.radius, parentName: s.parent, rNom: s.r, minable: s.minable, looseMoon: s.looseMoon }))
   }
 
   const earth = findBody(bodies, 'earth')!

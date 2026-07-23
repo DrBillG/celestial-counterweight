@@ -24,7 +24,7 @@ import { bandOf } from '../sim/stability'
 import { extract, returnSlag } from '../sim/mining'
 import { dist, norm, sub, v, type Vec } from '../sim/vec'
 import {
-  RATE, RATE_SLAG, EXTRACTION_FLOOR, SPHERE_MASS_REQUIRED,
+  RATE, RATE_SLAG, EXTRACTION_FLOOR, LOOSE_MOON_EXTRACTION_FLOOR, SPHERE_MASS_REQUIRED,
   SIM_RATE, TRAVEL_SPEED, MIN_TRANSIT, MAX_TRANSIT, SLINGSHOT_BONUS, DECISION_WINDOW,
   FAB_MASS_RATIO_MAX, FAB_MIN_SEPARATION,
 } from '../constants'
@@ -36,7 +36,11 @@ export type BodyRisk = 'standard' | 'fragile' | 'trophy'
 export type DirectorEvent =
   | { type: 'placementRejected' }
   | { type: 'extractionFloor'; body: string }
-  | { type: 'riskWarning'; body: string; risk: 'fragile' }
+  // 'fragile' = mars/phobos (mining dooms phobos, unrescuable). 'loose' = the
+  // jupiter trio (io/europa/ganymede) — barely bound, yields nothing net, but
+  // RESCUABLE by stationing on it with Return Slag (which tracks and re-
+  // circularizes it). The HUD gives each a different warning + rescue path.
+  | { type: 'riskWarning'; body: string; risk: 'fragile' | 'loose' }
 export type GameEvent = SimEvent | DirectorEvent
 
 // Construction anchor: where sphere segments are assembled — a spot on a
@@ -53,6 +57,11 @@ export class Director {
   state: DirectorState = 'orrery'
   cargo = 0
 
+  // Delivered mass needed to complete the sphere (win). Defaults to the shipped
+  // level-1 target (SPHERE_MASS_REQUIRED); main.ts passes a higher, level-scaled
+  // target from src/game/difficulty.ts. Kept as an instance field so the sim
+  // core (which never reads it) stays difficulty-agnostic.
+  readonly winTarget: number
   private sphereMass = 0
   private target: string | null = null // 'fab' or a body name
   // Where the ship currently is (for transit distances and hasty placement).
@@ -69,14 +78,17 @@ export class Director {
 
   // envelope: optional precomputed baseline envelope, passed straight
   // through to Sim (test/bot speedup — see the Sim constructor doc).
-  constructor(envelope?: Record<string, number>) {
+  // winTarget: delivered mass to win; defaults to the level-1 constant so every
+  // existing test/bot (which omits it) keeps the shipped balance.
+  constructor(envelope?: Record<string, number>, winTarget: number = SPHERE_MASS_REQUIRED) {
     this.sim = new Sim(envelope)
+    this.winTarget = winTarget
   }
 
   // ---- read-only queries -------------------------------------------------
 
   sphereProgress(): number {
-    return (100 * this.sphereMass) / SPHERE_MASS_REQUIRED
+    return (100 * this.sphereMass) / this.winTarget
   }
 
   transitRemaining(): number {
@@ -137,11 +149,24 @@ export class Director {
       throw new Error(`selectTarget: unknown target '${name}'`)
     }
     this.target = name
-    // Telegraph the fairness traps (mars/phobos) the moment they're picked —
-    // the HUD (Task 14) surfaces this before the player commits a transit.
-    if (name !== 'fab' && this.bodyRisk(name) === 'fragile') {
-      this.pending.push({ type: 'riskWarning', body: name, risk: 'fragile' })
+    // Telegraph the traps the moment they're picked — the HUD (Task 14)
+    // surfaces this before the player commits a transit. mars/phobos are
+    // 'fragile' (unrescuable); the jupiter trio are 'loose' (rescuable via
+    // Return Slag but net-zero yield).
+    if (name !== 'fab') {
+      if (this.bodyRisk(name) === 'fragile') {
+        this.pending.push({ type: 'riskWarning', body: name, risk: 'fragile' })
+      } else if (this.isLooseMoon(name)) {
+        this.pending.push({ type: 'riskWarning', body: name, risk: 'loose' })
+      }
     }
+  }
+
+  // Loosely-bound moon (jupiter trio) — orbits outside its parent's Hill
+  // sphere. The HUD routes its rescue to Return Slag (a counterweight can't
+  // hold a radially-infalling moon). See Body.looseMoon.
+  isLooseMoon(name: string): boolean {
+    return !!findBody(this.sim.bodies, name)?.looseMoon
   }
 
   // Clear the current selection. Only meaningful in 'orrery' (before a course is
@@ -302,7 +327,11 @@ export class Director {
     // loop until `mode` clears, not assume one tick drains a body. Only when
     // there is zero headroom left do we refuse and auto-stop the mode
     // (extractionFloor fires once per (re)selection).
-    const floor = EXTRACTION_FLOOR * body.m0
+    // Loose moons (jupiter trio) stop at a much higher floor — you can only skim
+    // a slice, keeping the mining recoil gentle enough that the Return-Slag
+    // rescue window is human-reactable (see LOOSE_MOON_EXTRACTION_FLOOR).
+    const floorFrac = body.looseMoon ? LOOSE_MOON_EXTRACTION_FLOOR : EXTRACTION_FLOOR
+    const floor = floorFrac * body.m0
     const dm = Math.min(RATE[this.mode as 'strip' | 'lattice'] * dt, body.mass - floor)
     if (dm <= 0) {
       this.mode = null
