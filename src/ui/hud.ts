@@ -52,6 +52,8 @@ const COMPOSITION: Record<string, string> = {
   io: 'S · SiO₂',
   europa: 'H₂O · Si',
   ganymede: 'H₂O · Fe · Si',
+  oberon: 'H₂O · CO₂ · Si',
+  triton: 'N₂ · H₂O · CH₄',
 }
 
 const BAND_COLOR: Record<string, string> = {
@@ -169,19 +171,19 @@ export class Hud {
     const N = worst.name.toUpperCase()
     const urgency = worst.band === 'critical' ? ' — ACT NOW or lose it!' : ''
 
-    // Loosely-bound moons (jupiter trio) can't be held by a fixed counterweight
-    // — they fall radially out of its range. The ONLY rescue is RETURN SLAG:
-    // station the ship ON the moon (it tracks the moon) and give back ALL the
-    // cargo, which re-circularizes the orbit. Net yield is zero — you mine them
-    // for the tightrope, not the mass.
+    // Loosely-bound moons (outside their parent's Hill sphere) can't be held by
+    // a fixed counterweight — they fall radially out of its range. The rescue is
+    // RETURN SLAG: station the ship ON the moon (it tracks the moon) and feed
+    // mass back, which re-circularizes the orbit. Tiny moons (the jupiter trio)
+    // need nearly all of it back; the heavier Moon keeps a little.
     if (d.isLooseMoon(worst.name)) {
       let action: string
       if (d.state === 'mining' && d.currentTarget() === worst.name) {
-        action = `press ↩ RETURN SLAG and give back ALL cargo to stabilize it`
+        action = `press ↩ RETURN SLAG to stabilize it (a counterweight can't hold it)`
       } else if (d.state === 'mining') {
-        action = `finish here, then fly back to ${N} and ↩ RETURN SLAG all cargo`
+        action = `finish here, then fly back to ${N} and ↩ RETURN SLAG to stabilize it`
       } else {
-        action = `fly to ${N}, then ↩ RETURN SLAG all cargo to save it (a counterweight can't hold it)`
+        action = `fly to ${N} and ↩ RETURN SLAG to stabilize it (a counterweight can't hold it)`
       }
       return { name: worst.name, color: BAND_COLOR[worst.band as 'amber' | 'red' | 'critical'], text: `⚠ ${N} is ${worst.band.toUpperCase()} — barely bound: ${action}${urgency}` }
     }
@@ -223,8 +225,8 @@ export class Hud {
         const t = d.currentTarget()
         const loose = !!t && t !== 'fab' && d.isLooseMoon(t)
         if (loose) {
-          if (d.cargo > 0) return `⚠ ${t!.toUpperCase()} is barely bound — press ↩ RETURN SLAG and give ALL cargo back to stabilize it (these moons yield nothing net).`
-          if (!d.activeExtraction()) return `⚠ ${t!.toUpperCase()} is fragile: a mining bite will destabilize it, and only ↩ RETURN SLAG can save it. Mine only if you want the tightrope.`
+          if (d.cargo > 0) return `⚠ ${t!.toUpperCase()} is barely bound — a counterweight can't hold it. Press ↩ RETURN SLAG to stabilize its orbit.`
+          if (!d.activeExtraction()) return `⚠ ${t!.toUpperCase()} is fragile — mine gently, then ↩ RETURN SLAG to stabilize it (a counterweight won't hold it).`
           return 'Mining…'
         }
         if (!d.activeExtraction()) return 'Press ⛏ LATTICE BORE to mine gently (STRIP BLAST is faster but risky).'
@@ -355,7 +357,7 @@ export class Hud {
           if (ev.risk === 'loose') {
             // Jupiter trio: rescuable but net-zero. Warn + teach the Return-Slag save.
             this.pushAlert(`⚠ ${body} BARELY BOUND`, AMBER)
-            this.banner.innerHTML = `⚠ ${body} IS BARELY BOUND — if you mine it, ↩ RETURN SLAG all cargo to stabilize it (yields nothing net)`
+            this.banner.innerHTML = `⚠ ${body} IS BARELY BOUND — a counterweight can't hold it; if you mine it, ↩ RETURN SLAG to stabilize its orbit`
           } else {
             const moon = ev.body === 'mars' ? ' — mining its moon Phobos is unrecoverable' : ''
             this.pushAlert(`⚠ ${body} FRAGILE`, RED)
@@ -486,7 +488,7 @@ export class Hud {
           this.card('lattice', GREEN, '⛏ LATTICE BORE', 'slow · LOW wobble ▲', mode === 'lattice') +
           (d.cargo > 0
             ? loose
-              ? this.card('slag', GREEN, '↩ RETURN SLAG', 'RESCUE: give ALL cargo back', mode === 'slag')
+              ? this.card('slag', GREEN, '↩ RETURN SLAG', 'RESCUE: stabilize its orbit', mode === 'slag')
               : this.card('slag', CYAN, '↩ RETURN SLAG', 'give cargo back to it', mode === 'slag')
             : '') +
           (loose

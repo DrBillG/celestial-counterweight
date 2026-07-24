@@ -73,17 +73,32 @@ const SPECS: Spec[] = [
   { name: 'mercury', kind: 'planet', parent: 'sun',     r: 38,   mass: 0.03, radius: 1.2, phase: 5.159330687797544 },
   { name: 'venus',   kind: 'planet', parent: 'sun',     r: 52,   mass: 0.4,  radius: 1.9, phase: 3.7743402939809916 },
   { name: 'earth',   kind: 'planet', parent: 'sun',     r: 75,   mass: 0.5,  radius: 2.0, phase: 3.7825118158053623 },
-  { name: 'moon',    kind: 'moon',   parent: 'earth',   r: 6,    mass: 0.012, radius: 0.7, minable: true, phase: 1.0 },
+  // Earth's Moon and Phobos orbit OUTSIDE their (light) parent's Hill sphere,
+  // so a counterweight can't hold them — flagged looseMoon so the game routes
+  // their rescue to Return Slag (which tracks the moon) instead of the
+  // impossible counterweight. This is the fix for the "counterweight does
+  // nothing and I lose" trap: the Moon is a natural target and used to be a
+  // silent death. See Body.looseMoon and dangerGuidance() in hud.ts.
+  { name: 'moon',    kind: 'moon',   parent: 'earth',   r: 6,    mass: 0.012, radius: 0.7, minable: true, looseMoon: true, phase: 1.0 },
   { name: 'mars',    kind: 'planet', parent: 'sun',     r: 104,  mass: 0.11, radius: 1.5, phase: 5.6007703765883, minable: true },
-  { name: 'phobos',  kind: 'moon',   parent: 'mars',    r: 4,    mass: 0.004, radius: 0.4, minable: true, phase: 2.0 },
+  { name: 'phobos',  kind: 'moon',   parent: 'mars',    r: 4,    mass: 0.004, radius: 0.4, minable: true, looseMoon: true, phase: 2.0 },
   { name: 'jupiter', kind: 'planet', parent: 'sun',     r: 175,  mass: 1.5,  radius: 5.5, phase: 0.7729674691607054 },
   { name: 'io',      kind: 'moon',   parent: 'jupiter', r: 8,    mass: 0.0005, radius: 0.7, minable: true, looseMoon: true, phase: 0.8 },
   { name: 'europa',  kind: 'moon',   parent: 'jupiter', r: 12,   mass: 0.0005, radius: 0.7, minable: true, looseMoon: true, phase: 2.9 },
   { name: 'ganymede',kind: 'moon',   parent: 'jupiter', r: 20.5, mass: 0.0005, radius: 0.9, minable: true, looseMoon: true, phase: 5.0 },
   { name: 'saturn',  kind: 'planet', parent: 'sun',     r: 255,  mass: 1.0,  radius: 4.8, phase: 2.0169372158879835 },
   { name: 'titan',   kind: 'moon',   parent: 'saturn',  r: 13,   mass: 0.023, radius: 0.9, minable: true, phase: 1.7 },
-  { name: 'uranus',  kind: 'planet', parent: 'sun',     r: 292,  mass: 0.45, radius: 3.2, phase: 1.1342241661813397 },
-  { name: 'neptune', kind: 'planet', parent: 'sun',     r: 344,  mass: 0.5,  radius: 3.1, phase: 0.5877357689177376 },
+  // Uranus/Neptune each gain ONE solo, well-bound moon — Titan-class clean
+  // mining targets (r well inside the planet's Hill sphere, no sibling → no
+  // mean-motion resonance). Their mass is STOLEN from the planet (uranus
+  // 0.45 = 0.432 + oberon 0.018; neptune 0.5 = 0.482 + triton 0.018) so the
+  // HELIOCENTRIC carried mass (planet + its moons, layer 1) is UNCHANGED and
+  // the null-test resonance chain sees no difference. Added post-launch to give
+  // more than one rescuable target (see the diagnosis: Titan was the only one).
+  { name: 'uranus',  kind: 'planet', parent: 'sun',     r: 292,  mass: 0.432, radius: 3.2, phase: 1.1342241661813397 },
+  { name: 'oberon',  kind: 'moon',   parent: 'uranus',  r: 8,    mass: 0.018, radius: 0.8, minable: true, phase: 3.3 },
+  { name: 'neptune', kind: 'planet', parent: 'sun',     r: 344,  mass: 0.482, radius: 3.1, phase: 0.5877357689177376 },
+  { name: 'triton',  kind: 'moon',   parent: 'neptune', r: 10,   mass: 0.018, radius: 0.8, minable: true, phase: 4.1 },
 ]
 
 export function findBody(bodies: Body[], name: string): Body | undefined {

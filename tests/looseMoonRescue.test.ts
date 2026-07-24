@@ -82,12 +82,49 @@ describe('loose-moon (jupiter trio) rescue contract', () => {
     expect(r).toBeGreaterThan(gan.rNom * 0.6) // nowhere near a jupiter collision
   })
 
-  it('director flags the trio as loose moons (and titan as a normal moon)', () => {
+  it('flags every outside-Hill-sphere moon as loose, and the bound ones as normal', () => {
     const d = new Director(envelope)
-    expect(d.isLooseMoon('ganymede')).toBe(true)
-    expect(d.isLooseMoon('io')).toBe(true)
-    expect(d.isLooseMoon('europa')).toBe(true)
-    expect(d.isLooseMoon('titan')).toBe(false)
-    expect(d.isLooseMoon('moon')).toBe(false)
+    // Loosely bound (outside parent Hill sphere) — counterweight can't hold them.
+    for (const n of ['ganymede', 'io', 'europa', 'moon', 'phobos']) {
+      expect(d.isLooseMoon(n)).toBe(true)
+    }
+    // Well bound (inside a heavy parent's Hill sphere) — counterweight-rescuable.
+    for (const n of ['titan', 'oberon', 'triton']) {
+      expect(d.isLooseMoon(n)).toBe(false)
+    }
   })
+})
+
+// The new clean targets (Titan-class solo moons of heavy planets) must be
+// COUNTERWEIGHT-rescuable — mine to amber, depart, place a segment, and the
+// counterweight holds the moon back to green. This is the "more options" fix:
+// before it, Titan was the only rescuable target. If a roster/physics change
+// makes these fall out of range or cascade, this fails.
+describe('clean counterweight targets (titan / oberon / triton)', () => {
+  function held(target: string): { held: boolean; endBand: string; cargo: number } {
+    const d = new Director(envelope)
+    fly(d, target)
+    d.chooseExtraction('lattice')
+    let el = 0
+    while (el < 400 && d.state === 'mining' && d.activeExtraction() != null) {
+      d.advance(STEP); el += STEP
+      if (d.sim.tracker.heldBand(target) !== 'green') break // backed off at amber
+    }
+    const cargo = d.cargo
+    fly(d, 'fab')
+    d.placeSegment('suggested') // drops a counterweight next to the worst wobbler
+    for (let i = 0; i < 12 && d.state === 'constructing'; i++) d.advance(STEP)
+    // Run the healing horizon; the counterweight must hold it (no catastrophe).
+    const survived = !lostToCatastrophe(d, 430)
+    return { held: survived, endBand: d.sim.tracker.heldBand(target), cargo }
+  }
+
+  for (const target of ['titan', 'oberon', 'triton']) {
+    it(`${target}: mine-to-amber → counterweight holds it (recovers toward green)`, () => {
+      const r = held(target)
+      expect(r.cargo).toBeGreaterThan(0)
+      expect(r.held).toBe(true)
+      expect(r.endBand).toBe('green')
+    })
+  }
 })
