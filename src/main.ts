@@ -57,6 +57,14 @@ if (!webglAvailable()) {
     // button visually + a toast follows for the big state changes).
     audio.unlock()
     audio.uiConfirm()
+    // Target picked from the HUD's MINING TARGETS list (findability fix — the
+    // outer moons are near-invisible specks in the orrery at default zoom).
+    if (id.startsWith('pick:')) {
+      const name = id.slice(5)
+      director.selectTarget(name)
+      hudUi.flash(`◎ TARGET — ${name.toUpperCase()}`)
+      return
+    }
     switch (id) {
       case 'launch': director.launch(); hudUi.flash(`▸ PLOTTING COURSE — ${(director.currentTarget() ?? '').toUpperCase()}`); break
       case 'burn': director.burn(); hudUi.flash('🔥 SLINGSHOT'); break

@@ -65,6 +65,8 @@ export class Hud {
   private alerts: HTMLDivElement
   private banner: HTMLDivElement
   private endScreen: HTMLDivElement
+  private targets: HTMLDivElement
+  private targetsSig = ''
   private coach: HTMLDivElement
   private danger: HTMLDivElement
   private transit: HTMLDivElement
@@ -128,6 +130,7 @@ export class Hud {
        <div id="cc-alerts" style="${PANEL}bottom:26px;right:12px;width:236px;border-color:rgba(224,94,94,.55);display:none"></div>
        <div id="cc-banner" style="${PANEL}top:118px;left:50%;transform:translateX(-50%);max-width:70vw;text-align:center;border-color:rgba(224,94,94,.7);color:${RED};font-size:15px;font-weight:bold;text-shadow:0 0 10px rgba(224,60,60,.6);display:none"></div>
        <div id="cc-end" class="clickable" style="${PANEL}top:50%;left:50%;transform:translate(-50%,-50%);text-align:center;padding:26px 34px;display:none"></div>
+       <div id="cc-targets" class="clickable" style="${PANEL}top:64px;left:12px;width:150px;display:none"></div>
        <div id="cc-coach" style="${PANEL}top:58px;left:50%;transform:translateX(-50%);max-width:64vw;text-align:center;border-color:rgba(87,200,255,.45);color:${CYAN};font-size:13px;display:none"></div>
        <div id="cc-danger" style="${PANEL}top:58px;left:50%;transform:translateX(-50%);max-width:70vw;text-align:center;font-weight:bold;font-size:14px;display:none"></div>
        <div id="cc-transit" style="${PANEL}top:50%;left:50%;transform:translate(-50%,-50%);text-align:center;padding:16px 26px;border-color:rgba(87,200,255,.6);min-width:260px;display:none"></div>
@@ -139,6 +142,7 @@ export class Hud {
     this.alerts = root.querySelector('#cc-alerts')!
     this.banner = root.querySelector('#cc-banner')!
     this.endScreen = root.querySelector('#cc-end')!
+    this.targets = root.querySelector('#cc-targets')!
     this.coach = root.querySelector('#cc-coach')!
     this.danger = root.querySelector('#cc-danger')!
     this.transit = root.querySelector('#cc-transit')!
@@ -253,6 +257,7 @@ export class Hud {
     this.renderAlerts()
     this.renderBanner()
     this.renderTransit(d)
+    this.renderTargets(d)
     this.renderCoachAndDanger(d)
     this.renderEnd(d)
     if (this.toastHideAt && performance.now() > this.toastHideAt) {
@@ -360,6 +365,50 @@ export class Hud {
       `<span style="color:#7fb3ff;opacity:.85">⏱ TEMPORAL COMPRESSORATOR ×80,000</span>` +
       `<span style="color:${hColor};text-shadow:0 0 8px ${hColor}55">HARMONY ${h.toFixed(0)}%</span>` +
       `<span style="color:${CYAN}">CARGO ${d.cargo.toFixed(4)}</span>`
+  }
+
+  // Clickable list of every minable moon (FINDABILITY fix). The outer moons are
+  // sub-pixel specks hugging bright parents near the horizon at the default
+  // camera, so players reported Earth's Moon was "the only live option". This
+  // panel guarantees every target is discoverable and selectable without
+  // pixel-hunting in 3D; the orrery also draws a min-screen-size ring on each.
+  // Rendered only in 'orrery' (target-picking) state, and signature-guarded so
+  // the button DOM is not rebuilt every frame (rebuilding drops clicks).
+  private renderTargets(d: Director): void {
+    if (d.state !== 'orrery') {
+      if (this.targets.style.display !== 'none') this.targets.style.display = 'none'
+      this.targetsSig = ''
+      return
+    }
+    const moons = d.sim.bodies.filter((b) => b.minable)
+    const sel = d.currentTarget()
+    const sig = moons.map((m) => `${m.name}:${this.bandOfBody(d, m.name)}:${m.name === sel}`).join('|')
+    this.targets.style.display = 'block'
+    if (sig === this.targetsSig) return
+    this.targetsSig = sig
+    this.targets.innerHTML =
+      `<div style="color:${GOLD};font-weight:bold;letter-spacing:1px;margin-bottom:6px">◎ MINING TARGETS</div>` +
+      moons
+        .map((m) => {
+          const band = this.bandOfBody(d, m.name)
+          const color = BAND_COLOR[band] ?? GREEN
+          const active = m.name === sel
+          return (
+            `<button class="clickable cc-btn" data-id="pick:${m.name}" style="display:block;width:100%;text-align:left;` +
+            `background:${active ? 'rgba(87,200,255,.18)' : 'transparent'};border:1px solid ${active ? CYAN : 'rgba(87,200,255,.25)'};` +
+            `border-radius:4px;color:#cfe3ff;font-family:inherit;font-size:12px;letter-spacing:.5px;padding:5px 7px;margin-bottom:4px;cursor:pointer">` +
+            `<span style="color:${color}">●</span> ${m.name.toUpperCase()}</button>`
+          )
+        })
+        .join('')
+  }
+
+  private bandOfBody(d: Director, name: string): string {
+    try {
+      return d.sim.tracker.heldBand(name)
+    } catch {
+      return 'green'
+    }
   }
 
   private renderInspector(d: Director): void {

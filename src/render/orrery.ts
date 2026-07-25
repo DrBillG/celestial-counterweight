@@ -83,6 +83,9 @@ export class Orrery {
   // (or misses → deselect) rather than landing on scenery like Venus.
   private pickProxies: THREE.Mesh[] = []
   private pickProxyByName = new Map<string, THREE.Mesh>()
+  // Visible min-screen-size ring on every minable moon — see the marker block
+  // in add(). Keeps the outer moons findable, not just clickable.
+  private targetMarkers = new Map<string, THREE.Mesh>()
   // Bright ring drawn around the currently-selected body so a click has obvious,
   // immediate feedback in the 3D scene (not just the side panel).
   private selectionRing: THREE.Mesh
@@ -216,6 +219,30 @@ export class Orrery {
       this.group.add(proxy)
       this.pickProxies.push(proxy)
       this.pickProxyByName.set(b.name, proxy)
+
+      // VISIBLE target marker (findability fix). The pick proxy above makes a
+      // tiny moon easy to CLICK but it is invisible, so the outer moons — 0.8
+      // world units, hugging a bright parent, compressed near the horizon at the
+      // default camera — rendered sub-pixel and players concluded Earth's Moon
+      // was the only target. This ring is scaled to the SAME min-screen-size as
+      // the pick proxy, so every minable moon is plainly visible and obviously
+      // clickable at any distance. Additive + depthWrite off so it reads as a
+      // HUD-ish holographic marker rather than geometry.
+      const marker = new THREE.Mesh(
+        new THREE.RingGeometry(0.86, 1, 32),
+        new THREE.MeshBasicMaterial({
+          color: 0x57c8ff,
+          transparent: true,
+          opacity: 0.75,
+          side: THREE.DoubleSide,
+          blending: THREE.AdditiveBlending,
+          depthWrite: false,
+          depthTest: false,
+        }),
+      )
+      marker.renderOrder = 5
+      this.group.add(marker)
+      this.targetMarkers.set(b.name, marker)
     }
 
     if ((b.kind === 'planet' || b.kind === 'moon') && b.parentName && b.rNom > 0) {
@@ -319,6 +346,16 @@ export class Orrery {
         const camDist = camera ? camera.position.distanceTo(proxy.position) : 250
         const r = Math.max((proxy.userData.bodyRadius as number) * 1.6, MIN_PROXY_WORLD, PICK_SCREEN_FRAC * camDist)
         proxy.scale.setScalar(r)
+
+        // The visible marker shares the proxy's transform (so what you see is
+        // exactly what you can click) and faces the camera so it always reads
+        // as a ring rather than an edge-on line.
+        const marker = this.targetMarkers.get(b.name)
+        if (marker) {
+          marker.position.copy(proxy.position)
+          marker.scale.setScalar(r * 1.15 * (1 + 0.06 * Math.sin(time * 2.2)))
+          if (camera) marker.quaternion.copy(camera.quaternion)
+        }
       }
 
       // Re-centre this body's guide-ring on its parent's current position
