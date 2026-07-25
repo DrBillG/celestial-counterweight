@@ -13,9 +13,7 @@
 //        built FROM cargo, so segment mass = delivered cargo.
 //  - 12: addFab may return null (mass-ratio / separation guards) — placement
 //        tries fallbacks, keeps cargo on rejection, and the decision-window
-//        expiry retries a guaranteed-legal far spot; launch() ends stationing;
-//        phobos is flagged 'fragile' (effectively unrescuable — mars is a
-//        fab-exclusion zone).
+//        expiry retries a guaranteed-legal far spot; launch() ends stationing.
 import { Sim, type SimEvent } from '../sim/sim'
 import type { Body } from '../sim/body'
 import { findBody } from '../sim/data'
@@ -24,7 +22,7 @@ import { bandOf } from '../sim/stability'
 import { extract, returnSlag } from '../sim/mining'
 import { dist, norm, sub, v, type Vec } from '../sim/vec'
 import {
-  RATE, RATE_SLAG, EXTRACTION_FLOOR, LOOSE_MOON_EXTRACTION_FLOOR, SPHERE_MASS_REQUIRED,
+  RATE, RATE_SLAG, EXTRACTION_FLOOR, SPHERE_MASS_REQUIRED,
   SIM_RATE, TRAVEL_SPEED, MIN_TRANSIT, MAX_TRANSIT, SLINGSHOT_BONUS, DECISION_WINDOW,
   FAB_MASS_RATIO_MAX, FAB_MIN_SEPARATION,
 } from '../constants'
@@ -36,11 +34,10 @@ export type BodyRisk = 'standard' | 'fragile' | 'trophy'
 export type DirectorEvent =
   | { type: 'placementRejected' }
   | { type: 'extractionFloor'; body: string }
-  // 'fragile' = mars/phobos (mining dooms phobos, unrescuable). 'loose' = the
-  // jupiter trio (io/europa/ganymede) — barely bound, yields nothing net, but
-  // RESCUABLE by stationing on it with Return Slag (which tracks and re-
-  // circularizes it). The HUD gives each a different warning + rescue path.
-  | { type: 'riskWarning'; body: string; risk: 'fragile' | 'loose' }
+  // Retained for the HUD/audio alert plumbing. No target currently fires it —
+  // every minable moon is a clean, counterweight-rescuable target (the old
+  // fragile poison-traps and loose moons were removed in the roster rework).
+  | { type: 'riskWarning'; body: string; risk: 'fragile' }
 export type GameEvent = SimEvent | DirectorEvent
 
 // Construction anchor: where sphere segments are assembled — a spot on a
@@ -74,6 +71,11 @@ export class Director {
   private burnUsed = false
   private decisionLeft = 0
   private mode: ExtractionMode | null = null
+  // Last body the player actually extracted mass from. suggestedBase() falls
+  // back to counterweighting this when nothing reads non-green (held score
+  // recovers on a timer and often flips back to green mid-flight) — see the
+  // playability note there.
+  private lastMined: string | null = null
   private pending: GameEvent[] = []
 
   // envelope: optional precomputed baseline envelope, passed straight
@@ -117,19 +119,12 @@ export class Director {
     return this.mode
   }
 
-  // Risk tag for the HUD/mining UI.
-  //  - phobos: ~40× more dose-fragile than titan AND effectively unrescuable
-  //    (mars-bound fabs are rejected by the mass-ratio guard, amendment 12(d)).
-  //  - mars: the biggest fairness trap in the build — it holds 73% of the
-  //    nominal minable pool, but mining it in ANY mode fatally destabilizes
-  //    phobos, and mars is a fab-exclusion zone (amendment 12(a)) so no
-  //    counterweight can save phobos. Telegraphed 'fragile' so the HUD can
-  //    warn before a player wastes a run on the poisoned pool.
-  //  - jupiter trio: near-massless (amendment 3), negligible cargo — trophy
-  //    targets only.
-  bodyRisk(name: string): BodyRisk {
-    if (name === 'phobos' || name === 'mars') return 'fragile'
-    if (name === 'io' || name === 'europa' || name === 'ganymede') return 'trophy'
+  // Risk tag for the HUD/mining UI. Every minable moon is now a clean,
+  // counterweight-rescuable target (the old fragile poison-traps — mars/phobos
+  // — and near-massless trophy trio were removed in the roster rework), so
+  // there is no special risk to telegraph: everything is 'standard'.
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  bodyRisk(_name: string): BodyRisk {
     return 'standard'
   }
 
@@ -149,24 +144,8 @@ export class Director {
       throw new Error(`selectTarget: unknown target '${name}'`)
     }
     this.target = name
-    // Telegraph the traps the moment they're picked — the HUD (Task 14)
-    // surfaces this before the player commits a transit. mars/phobos are
-    // 'fragile' (unrescuable); the jupiter trio are 'loose' (rescuable via
-    // Return Slag but net-zero yield).
-    if (name !== 'fab') {
-      if (this.bodyRisk(name) === 'fragile') {
-        this.pending.push({ type: 'riskWarning', body: name, risk: 'fragile' })
-      } else if (this.isLooseMoon(name)) {
-        this.pending.push({ type: 'riskWarning', body: name, risk: 'loose' })
-      }
-    }
-  }
-
-  // Loosely-bound moon (jupiter trio) — orbits outside its parent's Hill
-  // sphere. The HUD routes its rescue to Return Slag (a counterweight can't
-  // hold a radially-infalling moon). See Body.looseMoon.
-  isLooseMoon(name: string): boolean {
-    return !!findBody(this.sim.bodies, name)?.looseMoon
+    // No risk warnings to telegraph — every minable moon is a clean,
+    // counterweight-rescuable target now (roster rework removed the traps).
   }
 
   // Clear the current selection. Only meaningful in 'orrery' (before a course is
@@ -327,11 +306,7 @@ export class Director {
     // loop until `mode` clears, not assume one tick drains a body. Only when
     // there is zero headroom left do we refuse and auto-stop the mode
     // (extractionFloor fires once per (re)selection).
-    // Loose moons (jupiter trio) stop at a much higher floor — you can only skim
-    // a slice, keeping the mining recoil gentle enough that the Return-Slag
-    // rescue window is human-reactable (see LOOSE_MOON_EXTRACTION_FLOOR).
-    const floorFrac = body.looseMoon ? LOOSE_MOON_EXTRACTION_FLOOR : EXTRACTION_FLOOR
-    const floor = floorFrac * body.m0
+    const floor = EXTRACTION_FLOOR * body.m0
     const dm = Math.min(RATE[this.mode as 'strip' | 'lattice'] * dt, body.mass - floor)
     if (dm <= 0) {
       this.mode = null
@@ -339,9 +314,10 @@ export class Director {
       return
     }
     // refVel is REQUIRED (amendment 9): the orbital parent's velocity —
-    // moons use the parent planet's vel, mars (parent 'sun') the sun's.
+    // every minable body is a moon, so this is the parent planet's vel.
     const result = extract(body, this.mode as 'strip' | 'lattice', dm, parent.vel)
     this.cargo += result.cargo
+    this.lastMined = body.name
   }
 
   private expireDecision(): void {
@@ -350,9 +326,18 @@ export class Director {
       this.state = 'orrery'
       return
     }
-    // Auto-place hasty; if the ship's spot (and its fallbacks) are all
-    // rejected, fall back to the guaranteed-legal far scan.
-    const fab = this.tryPlaceWithFallbacks(this.shipPos()) ?? this.placeFar()
+    // Auto-place the SUGGESTED (counterweight) spot first — hesitating past the
+    // decision window must not doom the run. The old code auto-placed HASTY at
+    // the ship, which during construction sits at the fab anchor near the sun:
+    // far outside assist range, so the moon the player just mined kept decaying
+    // and died. Suggested targets the wobbling/just-mined body, so an
+    // auto-placement still rescues. Hasty (then the far scan) remain as
+    // fallbacks so cargo is never lost.
+    const base = this.suggestedBase()
+    const fab =
+      (base ? this.tryPlaceWithFallbacks(base) : null) ??
+      this.tryPlaceWithFallbacks(this.shipPos()) ??
+      this.placeFar()
     if (fab) {
       this.commitPlacement()
       return
@@ -391,10 +376,10 @@ export class Director {
   // primary passes the mass-ratio guard (amendment 12(a) — e.g. mars-bound
   // placements are skipped for any cargo > FAB_MASS_RATIO_MAX·0.11), offset
   // a few units outside the body. For moons the planet-centric radius is
-  // clamped to 1.2 Hill radii — the Task 8 measured stability limit
-  // (ganymede orbits OUTSIDE jupiter's Hill sphere; a fab parked beyond it
-  // is swallowed within ~300 tu, so the trio's counterweight belongs inside,
-  // where ASSIST_RANGE still covers all three).
+  // clamped to 1.2 Hill radii — the Task 8 measured stability limit (a fab
+  // parked beyond a planet's Hill sphere is swallowed within ~300 tu, so a
+  // moon's counterweight belongs inside it, where ASSIST_RANGE still covers
+  // the moon).
   private suggestedBase(): Vec | null {
     let best: Body | null = null
     let bestScore = Infinity
@@ -409,17 +394,41 @@ export class Director {
         best = b
       }
     }
-    // All-green fallback: if nothing is wobbling (every candidate at a green
-    // heldScore) there is no body worth counterweighting — park the segment
-    // in the sun annulus (via placeFar) rather than crowding a calm planet.
-    if (!best || bandOf(bestScore) === 'green') return null
+    // PLAYABILITY FIX: fall back to the body the player just MINED whenever
+    // nothing currently reads non-green. Held score recovers on a timer
+    // (HELD_RECOVERY_PER_TU), so a moon mined to amber typically ticks back to
+    // green during the short flight to the fab — the old code then concluded
+    // "nothing needs rescuing" and parked the segment in the sun annulus, out
+    // of assist range, while the moon's still-damaged orbit decayed into its
+    // parent. That is the "I place a counterweight and it does nothing / even
+    // hasty doesn't work" trap (hasty places at the ship, which is AT the fab
+    // anchor, so it is equally useless as a rescue). Counterweighting the just-
+    // mined body is always the useful choice: the assist is envelope-gated, so
+    // a genuinely healthy body simply feels zero force from it.
+    if (!best || bandOf(bestScore) === 'green') {
+      const mined = this.lastMined ? findBody(this.sim.bodies, this.lastMined) : undefined
+      const minedPrimary = mined?.parentName ? findBody(this.sim.bodies, mined.parentName) : undefined
+      const ratioOk = minedPrimary ? this.cargo / minedPrimary.mass <= FAB_MASS_RATIO_MAX : false
+      if (!mined || !minedPrimary || !ratioOk || mined.rNom === 0) return null
+      best = mined
+    }
     const parent = findBody(this.sim.bodies, best.parentName!)!
     const radial = norm(sub(best.pos, parent.pos))
     if (best.kind === 'moon') {
       const sun = findBody(this.sim.bodies, 'sun')!
       const aP = dist(parent.pos, sun.pos)
       const rHill = aP * Math.cbrt(parent.mass / (3 * sun.mass))
-      const r = Math.min(dist(best.pos, parent.pos) + best.radius + 4, 1.2 * rHill)
+      // Park the counterweight just OUTSIDE the moon but comfortably INSIDE the
+      // parent's Hill sphere. The old clamp (moon radius + 4, capped at
+      // 1.2·rHill) pushed it past the Hill radius for moons in a tight sphere —
+      // measured: a europa counterweight landed at 14.5 from jupiter (rHill
+      // 13.9), where no orbit is stable; the FAB crashed into jupiter within
+      // ~116 tu and the unprotected moon died soon after. 0.85·rHill keeps the
+      // retrograde (DRO) orbit in its stable band, and the smaller +2 offset
+      // keeps it near the moon it is holding. Moon↔fab pairs carry no mutual
+      // gravity and never collide (different sim layers), so parking close is
+      // safe.
+      const r = Math.min(dist(best.pos, parent.pos) + best.radius + 2, 0.85 * rHill)
       return v(parent.pos.x + radial.x * r, parent.pos.y + radial.y * r)
     }
     const off = best.radius + 4

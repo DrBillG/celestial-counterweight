@@ -10,7 +10,6 @@ interface Spec {
   mass: number
   radius: number // visual/collision radius
   minable?: boolean
-  looseMoon?: boolean // orbits outside parent Hill sphere (jupiter trio) — see Body.looseMoon
   phase: number  // starting angle (radians) — EXPLICIT for every body: determinism is a hard requirement
 }
 
@@ -72,20 +71,35 @@ const SPECS: Spec[] = [
   { name: 'sun',     kind: 'star',   parent: null,      r: 0,    mass: SUN_MASS, radius: 10, phase: 0 },
   { name: 'mercury', kind: 'planet', parent: 'sun',     r: 38,   mass: 0.03, radius: 1.2, phase: 5.159330687797544 },
   { name: 'venus',   kind: 'planet', parent: 'sun',     r: 52,   mass: 0.4,  radius: 1.9, phase: 3.7743402939809916 },
-  { name: 'earth',   kind: 'planet', parent: 'sun',     r: 75,   mass: 0.5,  radius: 2.0, phase: 3.7825118158053623 },
-  // Earth's Moon and Phobos orbit OUTSIDE their (light) parent's Hill sphere,
-  // so a counterweight can't hold them — flagged looseMoon so the game routes
-  // their rescue to Return Slag (which tracks the moon) instead of the
-  // impossible counterweight. This is the fix for the "counterweight does
-  // nothing and I lose" trap: the Moon is a natural target and used to be a
-  // silent death. See Body.looseMoon and dangerGuidance() in hud.ts.
-  { name: 'moon',    kind: 'moon',   parent: 'earth',   r: 6,    mass: 0.012, radius: 0.7, minable: true, looseMoon: true, phase: 1.0 },
-  { name: 'mars',    kind: 'planet', parent: 'sun',     r: 104,  mass: 0.11, radius: 1.5, phase: 5.6007703765883, minable: true },
-  { name: 'phobos',  kind: 'moon',   parent: 'mars',    r: 4,    mass: 0.004, radius: 0.4, minable: true, looseMoon: true, phase: 2.0 },
-  { name: 'jupiter', kind: 'planet', parent: 'sun',     r: 175,  mass: 1.5,  radius: 5.5, phase: 0.7729674691607054 },
-  { name: 'io',      kind: 'moon',   parent: 'jupiter', r: 8,    mass: 0.0005, radius: 0.7, minable: true, looseMoon: true, phase: 0.8 },
-  { name: 'europa',  kind: 'moon',   parent: 'jupiter', r: 12,   mass: 0.0005, radius: 0.7, minable: true, looseMoon: true, phase: 2.9 },
-  { name: 'ganymede',kind: 'moon',   parent: 'jupiter', r: 20.5, mass: 0.0005, radius: 0.9, minable: true, looseMoon: true, phase: 5.0 },
+  // MOON PLAYABILITY (post-launch rework). The Moon used to orbit OUTSIDE
+  // earth's Hill sphere ("barely bound"), so no counterweight could hold it and
+  // mining it was a silent death. Three changes make it behave like every other
+  // moon: earth mass 0.5→1.0 (a bigger Hill sphere, ≈5.2, with room for both the
+  // moon AND a counterweight outside it), earth collision radius 2.0→1.2 (radius
+  // affects only collision + rendering, never gravity), and moon r 6→3.2
+  // (Hill ratio ≈0.62, collision margin ≈40%). The heavier earth is verified
+  // against the null test; a moon's orbit radius never touches the heliocentric
+  // layer (the planet carries the moon's mass regardless).
+  { name: 'earth',   kind: 'planet', parent: 'sun',     r: 75,   mass: 1.0,  radius: 1.2, phase: 3.7825118158053623 },
+  { name: 'moon',    kind: 'moon',   parent: 'earth',   r: 3.2,  mass: 0.012, radius: 0.7, minable: true, phase: 1.0 },
+  // Mars is a moonless planet now. It used to be minable (a "poison trap": the
+  // big planet fatally destabilized its unrescuable moon Phobos) — exactly the
+  // hidden gotcha we're removing. And Mars is too light (0.11 → tiny Hill
+  // sphere ≈3.4) to host a counterweight-rescuable moon, so Phobos is dropped
+  // rather than left as a broken target. Planets aren't mined; moons are.
+  { name: 'mars',    kind: 'planet', parent: 'sun',     r: 104,  mass: 0.11, radius: 1.5, phase: 5.6007703765883 },
+  // Jupiter gets ONE solo moon (europa), replacing the old tiny 3-moon trio
+  // (io/europa/ganymede at 0.0005). A single moon can carry a proper mining
+  // mass (0.018) without a sibling to mutually perturb it — TWO moons at that
+  // mass broke the null test; the original trio only held together because the
+  // moons were near-massless. Solo europa r=10 (inside jupiter's Hill≈13.9,
+  // ratio 0.72) is a clean counterweight target like titan/oberon/triton;
+  // jupiter's collision radius is 4.6 so europa keeps a ~46% collision margin
+  // (at r=8 with radius 5.5 the margin was only 21% and mining killed it). Mass
+  // STOLEN from jupiter (1.5 → 1.4835 + 0.018 = 1.5015 carried, unchanged) so
+  // the heliocentric null-test chain is untouched.
+  { name: 'jupiter', kind: 'planet', parent: 'sun',     r: 175,  mass: 1.4835, radius: 4.6, phase: 0.7729674691607054 },
+  { name: 'europa',  kind: 'moon',   parent: 'jupiter', r: 10,   mass: 0.018, radius: 0.8, minable: true, phase: 2.9 },
   { name: 'saturn',  kind: 'planet', parent: 'sun',     r: 255,  mass: 1.0,  radius: 4.8, phase: 2.0169372158879835 },
   { name: 'titan',   kind: 'moon',   parent: 'saturn',  r: 13,   mass: 0.023, radius: 0.9, minable: true, phase: 1.7 },
   // Uranus/Neptune each gain ONE solo, well-bound moon — Titan-class clean
@@ -120,7 +134,7 @@ export function buildSystem(): Body[] {
     // what the hierarchical integrator actually applies.
     const vCirc = circularSpeed(parent.mass, s.r)
     const vel = add(parent.vel, v(-Math.sin(s.phase) * vCirc, Math.cos(s.phase) * vCirc))
-    bodies.push(makeBody({ name: s.name, kind: s.kind, mass: s.mass, pos, vel, radius: s.radius, parentName: s.parent, rNom: s.r, minable: s.minable, looseMoon: s.looseMoon }))
+    bodies.push(makeBody({ name: s.name, kind: s.kind, mass: s.mass, pos, vel, radius: s.radius, parentName: s.parent, rNom: s.r, minable: s.minable }))
   }
 
   const earth = findBody(bodies, 'earth')!

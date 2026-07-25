@@ -28,19 +28,6 @@ export const HELD_RECOVERY_PER_TU = 0.25  // TUNE: held-score recovery rate; gen
 // delivery at t≈104). 0.014 breaks the grid-robust rescue proof (runaway
 // out-pulls the PD assist); 0.013 rescues cleanly (endBand green, dev 0.26→0.01).
 export const RUNAWAY_ACCEL = 0.013     // TUNE: designed instability past critical (retuned 0.004→0.013, see above)
-// Loosely-bound moons (jupiter trio, Body.looseMoon) get NO designed runaway.
-// They orbit OUTSIDE their parent's Hill sphere, so the normal cascade drove
-// them into jupiter within ~5 tu of leaving green — an unfair, sub-5-second
-// rescue window (measured). Turning the runaway OFF for them leaves a mined
-// loose moon coasting on a mild eccentric orbit instead of compounding inward,
-// which opens a WIDE, human-reactable Return-Slag rescue window (verified ≥30 tu
-// in tests/looseMoonRescue). They're STILL a real threat: the trio's mutual
-// resonant coupling means a mined-and-abandoned moon still wanders into a
-// sibling collision (the RECKLESS test pins this), so reckless play still loses.
-// A fixed counterweight can't hold them regardless (they fall radially out of
-// its range) — the rescue is Return Slag, which tracks the moon. TUNE: keep 0
-// unless the reckless-loss and wide-window tests both still hold.
-export const LOOSE_MOON_RUNAWAY_SCALE = 0.0 // TUNE
 export const EJECT_RADIUS = 600        // beyond this from sun = ejected (lose event)
 
 // Mining (Task 5; rates retuned in Task 9 per amendment 10 — the original
@@ -60,14 +47,6 @@ export const RATE_SLAG = 0.0002        // TUNE: mass/tu returned to a body durin
 // Director-side husk guard (amendment 9): refuse to mine a body below this
 // fraction of its m0 — exhausted husks become unbounded-Δv noisemakers.
 export const EXTRACTION_FLOOR = 0.05   // TUNE
-// Loosely-bound moons (jupiter trio) get a MUCH higher floor: you can only skim
-// a thin slice before the husk guard stops you. Draining a tiny moon to its 5%
-// floor rips away ~95% of its mass, and momentum conservation flings it onto a
-// collision course only INSTANT re-circularization can undo (a sub-5-tu rescue
-// window — unfair). Skimming only a slice keeps the recoil gentle, so the moon
-// degrades slowly, the Return-Slag rescue window is wide (human-reactable), and
-// a small mass payoff survives the rescue. TUNE against tests/looseMoonRescue.
-export const LOOSE_MOON_EXTRACTION_FLOOR = 0.7 // TUNE
 
 // Rebalance (Task 8, amendment 11: PD controller at REAL fab masses)
 // The assist is a PD controller (see Sim.extraAccel). Per-body total gain
@@ -120,16 +99,10 @@ export const FAB_MASS_RATIO_MAX = 0.05 // TUNE
 // capture, collide, and doom the rescue.
 export const FAB_MIN_SEPARATION = 8    // TUNE
 
-// Dyson sphere win target. HONEST pool math (Task 9 quality review):
-// nominal minable m0 pool ≈ 0.1505, BUT mars (0.1045 — 73% of the pool) is
-// POISONED: mining it in any mode fatally destabilizes its moon phobos, and
-// phobos is unrescuable (mars is a fab-exclusion zone, amendment 12a — no
-// counterweight can hold it). Honestly-accessible pool = titan 0.0219 +
-// moon 0.0114 + jupiter trio 0.0014 ≈ 0.035 usable AFTER the extraction
-// floors. Of that, the jupiter trio (0.0014) proved to be its own mini-trap:
-// the near-massless resonant moons husk-kick (amendment 9) into a jupiter
-// collision when drained toward their floor, so the honestly-DELIVERABLE
-// pool is titan + moon ≈ 0.033 held by counterweights.
+// Dyson sphere win target. HONEST pool math: the minable roster is five clean
+// counterweight-rescuable moons (moon, europa, titan, oberon, triton). Their
+// combined m0 pool is ≈0.089; usable delivery is that pool minus the per-body
+// extraction floors, held by counterweights.
 //
 // MEASURED (Task 10 scenario bots, tests/scenario.test.ts): the efficient
 // mine-to-amber → counterweight bot DELIVERS ≥0.0149 and wins (it stops at

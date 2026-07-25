@@ -11,7 +11,7 @@ import type { Body } from '../sim/body'
 import type { Band } from '../sim/stability'
 
 // Solar System Scope 2k texture filenames (public/textures). Moons without a
-// texture (phobos/io/europa/ganymede/titan) fall through to FALLBACK_COLOR.
+// texture (europa/titan/oberon/triton) fall through to FALLBACK_COLOR.
 const TEXTURE_FILE: Record<string, string> = {
   sun: '2k_sun.jpg',
   mercury: '2k_mercury.jpg',
@@ -28,9 +28,8 @@ const TEXTURE_FILE: Record<string, string> = {
 // Flat colors used until/instead of a texture (missing file or failed load).
 const FALLBACK_COLOR: Record<string, number> = {
   sun: 0xffd75e, mercury: 0x9a8a7a, venus: 0xd9b98a, earth: 0x5a8fd0, moon: 0xb0b0b8,
-  mars: 0xd0745a, phobos: 0x8a7a6a, jupiter: 0xcaa77e, io: 0xd8c060, europa: 0xc8d8e0,
-  ganymede: 0xa89a8a, saturn: 0xd8c8a0, titan: 0xd0a860, uranus: 0x9ad0d8, neptune: 0x6a8ad8,
-  oberon: 0xbcb0c8, triton: 0x9ec8d8,
+  mars: 0xd0745a, jupiter: 0xcaa77e, europa: 0xc8d8e0, saturn: 0xd8c8a0, titan: 0xd0a860,
+  uranus: 0x9ad0d8, oberon: 0xbcb0c8, neptune: 0x6a8ad8, triton: 0x9ec8d8,
 }
 
 // Trails glow in the body's held stability band (bright, additive → bloom).

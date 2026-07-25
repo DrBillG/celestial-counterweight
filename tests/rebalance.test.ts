@@ -201,26 +201,14 @@ describe('rebalance efficacy: PD assist at real fab masses (Task 8, amendment 11
   // construction. (The moons themselves can NEVER feel fab gravity at all —
   // cross-layer bodies are gravitationally invisible, amendment 1.)
   //
-  // MEASURED FINDING (ganymede fab attrition — reported per this task's
-  // "try offset 8-12 before weakening anything" instruction): the titan
-  // fab (13+6 = 19 from saturn, 1.07 Hill radii) parks cleanly — zero
-  // events of ANY type through t=300, verified at offsets 6 through 15.
-  // The GANYMEDE fab cannot park at all: ganymede orbits at 20.5 from
-  // jupiter — OUTSIDE jupiter's Hill radius (13.9) — which only a moon can
-  // do (moons integrate in the tide-exempt layer-2 frame, amendment 1);
-  // any HELIO-layer body placed 6-15 units further out (1.9-2.6 r_H) is in
-  // jupiter's chaotic co-orbital annulus, where every init family tried
-  // (sun-circular, circular-retrograde DRO, quasi-satellite epicycle —
-  // wrong- and right-phased) is captured and swallowed by jupiter within
-  // 300 tu. That loss is a quiet gameplay setback (fabLost), NOT chaos:
-  // it perturbs nothing — zero band events, zero catastrophes, and the
-  // jupiter trio never notices. This test asserts exactly that measured
-  // reality: full inertness everywhere, titan-fab parking survives, and
-  // the ONLY event the run may produce is the ganymede fab's own silent
-  // fabLost. (Task 9 placement guidance: park counterweights at
-  // 0.3-1.2 r_H of the parent planet — the ganymede/io/europa assist fab
-  // belongs INSIDE jupiter's Hill sphere, where ASSIST_RANGE=40 still
-  // covers the whole trio.)
+  // The titan fab (13+6 = 19 from saturn, ~1.07 Hill radii) parks cleanly —
+  // zero events of ANY type through t=300, verified at offsets 6 through 15.
+  // A second real-mass fab parked just outside europa's orbit is likewise
+  // inert or, at worst, quietly captured by jupiter (a silent fabLost setback,
+  // NOT chaos): it perturbs nothing — zero band events, zero catastrophes.
+  // This test asserts exactly that: full inertness everywhere, titan-fab
+  // parking survives, and the ONLY event the run may produce is the europa
+  // fab's own silent fabLost.
   it('real-mass fab proximity is inert: no false alarms, no chaos, titan parking survives', () => {
     const sim = new Sim(envelope)
     const titan = findBody(sim.bodies, 'titan')!
@@ -229,11 +217,11 @@ describe('rebalance efficacy: PD assist at real fab masses (Task 8, amendment 11
     const titanFab = sim.addFab({ x: titan.pos.x + tRadial.x * 6, y: titan.pos.y + tRadial.y * 6 }, 0.05)
     expect(titanFab).not.toBeNull()
 
-    const ganymede = findBody(sim.bodies, 'ganymede')!
+    const europa = findBody(sim.bodies, 'europa')!
     const jupiter = findBody(sim.bodies, 'jupiter')!
-    const gRadial = norm(sub(ganymede.pos, jupiter.pos))
-    const ganymedeFab = sim.addFab({ x: ganymede.pos.x + gRadial.x * 6, y: ganymede.pos.y + gRadial.y * 6 }, 0.05)
-    expect(ganymedeFab).not.toBeNull()
+    const gRadial = norm(sub(europa.pos, jupiter.pos))
+    const europaFab = sim.addFab({ x: europa.pos.x + gRadial.x * 6, y: europa.pos.y + gRadial.y * 6 }, 0.05)
+    expect(europaFab).not.toBeNull()
 
     sim.tick(300)
     const events = sim.drainEvents()
@@ -243,9 +231,7 @@ describe('rebalance efficacy: PD assist at real fab masses (Task 8, amendment 11
     expect(events.filter(isCatastrophe)).toEqual([])
     // Titan-side parking is stable — that fab must survive untouched.
     expect(events.filter(e => isFabLost(e) && e.fab === titanFab!.name)).toEqual([])
-    // Only permissible event: the ganymede fab's own silent loss (see the
-    // measured-finding comment above — it orbits outside jupiter's Hill
-    // radius, unreachable parking for any helio-layer body).
-    expect(events.filter(e => !(isFabLost(e) && e.fab === ganymedeFab!.name))).toEqual([])
+    // Only permissible event: the europa fab's own silent loss.
+    expect(events.filter(e => !(isFabLost(e) && e.fab === europaFab!.name))).toEqual([])
   })
 })

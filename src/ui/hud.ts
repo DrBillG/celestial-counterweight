@@ -17,11 +17,10 @@
 //  - Return Slag is director.chooseExtraction('slag') (there is no dumpSlag),
 //    and the card only shows with cargo > 0 (amendment 9/11 — slag returns
 //    held cargo).
-//  - Inspector surfaces bodyRisk() as a badge (fragile ⚠ red / trophy gold /
-//    standard none) and stability via sim.tracker.heldBand (amendment 13b).
-//  - riskWarning / fabLost / extractionFloor / placementRejected DirectorEvents
-//    feed the alert stack and the transient fragile-body banner (amendment 13b,
-//    12d — phobos/mars are unrescuable traps the HUD must telegraph).
+//  - Inspector surfaces bodyRisk() as a badge (always 'standard' now — every
+//    minable moon is a clean target) and stability via sim.tracker.heldBand.
+//  - fabLost / extractionFloor / placementRejected DirectorEvents feed the
+//    alert stack (riskWarning is retained plumbing but no target fires it).
 //  - Alarm (bridge red edge-glow, amendment 13/Task 13 setAlarm) is owned here:
 //    driven off an event-tracked set of red/critical bodies so it clears when
 //    nothing is actively red/critical, and latches on for catastrophe (game
@@ -47,11 +46,7 @@ const PANEL =
 const COMPOSITION: Record<string, string> = {
   titan: 'CH₄ · H₂O · Si',
   moon: 'Si · Fe · O₂',
-  phobos: 'C · Si · Fe',
-  mars: 'Fe₂O₃ · Si · CO₂',
-  io: 'S · SiO₂',
   europa: 'H₂O · Si',
-  ganymede: 'H₂O · Fe · Si',
   oberon: 'H₂O · CO₂ · Si',
   triton: 'N₂ · H₂O · CH₄',
 }
@@ -171,23 +166,6 @@ export class Hud {
     const N = worst.name.toUpperCase()
     const urgency = worst.band === 'critical' ? ' — ACT NOW or lose it!' : ''
 
-    // Loosely-bound moons (outside their parent's Hill sphere) can't be held by
-    // a fixed counterweight — they fall radially out of its range. The rescue is
-    // RETURN SLAG: station the ship ON the moon (it tracks the moon) and feed
-    // mass back, which re-circularizes the orbit. Tiny moons (the jupiter trio)
-    // need nearly all of it back; the heavier Moon keeps a little.
-    if (d.isLooseMoon(worst.name)) {
-      let action: string
-      if (d.state === 'mining' && d.currentTarget() === worst.name) {
-        action = `press ↩ RETURN SLAG to stabilize it (a counterweight can't hold it)`
-      } else if (d.state === 'mining') {
-        action = `finish here, then fly back to ${N} and ↩ RETURN SLAG to stabilize it`
-      } else {
-        action = `fly to ${N} and ↩ RETURN SLAG to stabilize it (a counterweight can't hold it)`
-      }
-      return { name: worst.name, color: BAND_COLOR[worst.band as 'amber' | 'red' | 'critical'], text: `⚠ ${N} is ${worst.band.toUpperCase()} — barely bound: ${action}${urgency}` }
-    }
-
     // A COUNTERWEIGHT (deliver cargo to the fab → place it) is the real rescue —
     // it holds a wobbling orbit at amber and even at red. It auto-targets the
     // worst body, so the player just needs to get to the fab with cargo.
@@ -222,13 +200,6 @@ export class Hud {
       case 'transit':
         return ''
       case 'mining': {
-        const t = d.currentTarget()
-        const loose = !!t && t !== 'fab' && d.isLooseMoon(t)
-        if (loose) {
-          if (d.cargo > 0) return `⚠ ${t!.toUpperCase()} is barely bound — a counterweight can't hold it. Press ↩ RETURN SLAG to stabilize its orbit.`
-          if (!d.activeExtraction()) return `⚠ ${t!.toUpperCase()} is fragile — mine gently, then ↩ RETURN SLAG to stabilize it (a counterweight won't hold it).`
-          return 'Mining…'
-        }
         if (!d.activeExtraction()) return 'Press ⛏ LATTICE BORE to mine gently (STRIP BLAST is faster but risky).'
         if (d.cargo > 0) return 'Mining… press 🚀 DEPART TO FAB when you have enough cargo.'
         return 'Mining…'
@@ -354,15 +325,8 @@ export class Hud {
           break
         case 'riskWarning': {
           const body = ev.body.toUpperCase()
-          if (ev.risk === 'loose') {
-            // Jupiter trio: rescuable but net-zero. Warn + teach the Return-Slag save.
-            this.pushAlert(`⚠ ${body} BARELY BOUND`, AMBER)
-            this.banner.innerHTML = `⚠ ${body} IS BARELY BOUND — a counterweight can't hold it; if you mine it, ↩ RETURN SLAG to stabilize its orbit`
-          } else {
-            const moon = ev.body === 'mars' ? ' — mining its moon Phobos is unrecoverable' : ''
-            this.pushAlert(`⚠ ${body} FRAGILE`, RED)
-            this.banner.innerHTML = `⚠ ${body} IS UNSTABLE${moon}`
-          }
+          this.pushAlert(`⚠ ${body} FRAGILE`, RED)
+          this.banner.innerHTML = `⚠ ${body} IS UNSTABLE`
           this.bannerUntil = performance.now() + 5000
           break
         }
@@ -465,9 +429,7 @@ export class Hud {
     // silently dropped (buttons destroyed mid-press). Volatile numbers (the
     // transit/decision countdowns) update via a stable child span instead.
     const mode = d.activeExtraction()
-    const t = d.currentTarget()
-    const loose = d.state === 'mining' && !!t && t !== 'fab' && d.isLooseMoon(t)
-    const sig = `${d.state}|${mode}|${d.cargo > 0}|${loose}`
+    const sig = `${d.state}|${mode}|${d.cargo > 0}`
     if (sig !== this.cardsSig) {
       this.cardsSig = sig
       if (d.state === 'transit') {
@@ -478,22 +440,15 @@ export class Hud {
           'arrive sooner · <span id="cc-cardtimer"></span>',
         )
       } else if (d.state === 'mining') {
-        // Normal moons: the rescue is a COUNTERWEIGHT (DEPART TO FAB → place).
-        // LOOSE moons (jupiter trio): a counterweight CAN'T hold them — the
-        // rescue is RETURN SLAG (station + give ALL cargo back). So for a loose
-        // moon we promote RETURN SLAG to the green "RESCUE" card and demote the
-        // DEPART card to a plain "add to sphere (won't rescue it)".
+        // The rescue for a wobbling moon is a COUNTERWEIGHT (DEPART TO FAB →
+        // place). RETURN SLAG feeds cargo back to the body (budget + orbit heal).
         this.cards.innerHTML =
           this.card('strip', AMBER, '⛏ STRIP BLAST', 'fast · HIGH wobble ▲▲▲', mode === 'strip') +
           this.card('lattice', GREEN, '⛏ LATTICE BORE', 'slow · LOW wobble ▲', mode === 'lattice') +
           (d.cargo > 0
-            ? loose
-              ? this.card('slag', GREEN, '↩ RETURN SLAG', 'RESCUE: stabilize its orbit', mode === 'slag')
-              : this.card('slag', CYAN, '↩ RETURN SLAG', 'give cargo back to it', mode === 'slag')
+            ? this.card('slag', CYAN, '↩ RETURN SLAG', 'give cargo back to it', mode === 'slag')
             : '') +
-          (loose
-            ? this.card('to-fab', GOLD, '🚀 DEPART TO FAB', "add cargo to sphere · won't rescue it")
-            : this.card('to-fab', GOLD, '🚀 DEPART TO FAB', 'RESCUE: build a counterweight'))
+          this.card('to-fab', GOLD, '🚀 DEPART TO FAB', 'RESCUE: build a counterweight')
       } else if (d.state === 'orrery' && d.cargo > 0) {
         // Persistent path to the fab from the map view (build a counterweight /
         // add to the sphere) even with no body selected.

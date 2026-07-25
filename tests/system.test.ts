@@ -7,7 +7,7 @@ import { DT, RUN_DURATION } from '../src/constants'
 describe('solar system', () => {
   it('contains the minable roster', () => {
     const bodies = buildSystem()
-    for (const name of ['moon', 'phobos', 'io', 'europa', 'ganymede', 'titan']) {
+    for (const name of ['moon', 'europa', 'titan', 'oberon', 'triton']) {
       expect(findBody(bodies, name)?.minable).toBe(true)
     }
     expect(findBody(bodies, 'ship')).toBeDefined()

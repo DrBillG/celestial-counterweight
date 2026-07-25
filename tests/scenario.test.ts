@@ -140,18 +140,17 @@ function runGreedy(d: Director): GreedyResult {
 
 // ---- EFFICIENT BOT -------------------------------------------------------
 // Encodes the measured winning cadence (amendments 11–13): pick the richest
-// SAFE body (never a 'fragile' one — that gate excludes mars & phobos),
-// lattice-mine until its held band leaves green (amber = time to back off)
-// OR the extraction floor auto-stops the mode, depart, and deliver the cargo
-// as a 'suggested' segment. 'suggested' both credits the sphere AND drops a
-// counterweight next to the just-mined body, whose PD assist holds it while
-// its orbit heals back to green — so the next round can mine it again. The
-// richest-first rule naturally realizes the titan → moon → jupiter-trio
-// priority (the trio has the least headroom, so it is only ever reached if
-// the real pool is exhausted, which never happens before the win).
+// body with headroom, lattice-mine until its held band leaves green (amber =
+// time to back off) OR the extraction floor auto-stops the mode, depart, and
+// deliver the cargo as a 'suggested' segment. 'suggested' both credits the
+// sphere AND drops a counterweight next to the just-mined body, whose PD
+// assist holds it while its orbit heals back to green — so the next round can
+// mine it again. Every body in the rotation is a clean, rescuable moon (the
+// roster rework removed the fragile/loose traps), so richest-first just walks
+// down the mass ladder until the win.
 //
 // This is ALSO the reference bot the balance pass was tuned against.
-const SAFE_ROTATION = ['titan', 'moon', 'io', 'europa', 'ganymede']
+const SAFE_ROTATION = ['titan', 'moon', 'europa', 'oberon', 'triton']
 
 interface EfficientResult {
   state: string
@@ -258,37 +257,7 @@ describe('Scenario bots (Task 10): winnable · losable · honest', () => {
     console.log(`  honesty: efficient ${efficient.progress.toFixed(1)}% > greedy peak ${greedy.peakProgress.toFixed(1)}%`)
   })
 
-  // 4. MARS IS A TELEGRAPHED TRAP (amendment 13) ----------------------------
-  it('mars is a trap and the game says so: selecting warns, mining it loses', () => {
-    // (a) selecting mars emits the riskWarning the HUD surfaces.
-    const warnDir = new Director(envelope)
-    warnDir.selectTarget('mars')
-    const warned = warnDir
-      .drainEvents()
-      .some(e => e.type === 'riskWarning' && e.body === 'mars')
-    expect(warned).toBe(true)
-
-    // (b) a bot that ignores the warning and mines mars anyway loses — mining
-    // mars in any mode fatally destabilizes phobos, which is unrescuable.
-    const d = new Director(envelope)
-    const loss: Loss = { lost: false, cause: 'none', atTu: -1 }
-    let elapsed = 0
-    elapsed += fly(d, 'mars')
-    scanLoss(d, elapsed, loss)
-    d.chooseExtraction('strip')
-    while (elapsed < RUN_DURATION && stateOf(d) !== 'lost') {
-      if (stateOf(d) === 'mining' && d.activeExtraction() == null) d.chooseExtraction('strip')
-      d.advance(STEP)
-      elapsed += STEP
-      scanLoss(d, elapsed, loss)
-    }
-    expect(stateOf(d)).toBe('lost')
-    expect(loss.cause).toContain('phobos') // the poisoned moon is what dies
-    // eslint-disable-next-line no-console
-    console.log(`  mars trap: lost at t=${loss.atTu} (${loss.cause})`)
-  })
-
-  // 5. NO-INPUT SAFETY ------------------------------------------------------
+  // 4. NO-INPUT SAFETY ------------------------------------------------------
   it('no-input safety: a pristine system just advancing never self-destructs', () => {
     const d = new Director(envelope)
     let catastrophes = 0

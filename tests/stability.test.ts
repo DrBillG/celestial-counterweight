@@ -81,10 +81,10 @@ describe('stability (envelope-based)', () => {
   it('mass-loss coupling: draining a parent loosens its moons (spec §5)', () => {
     const bodies = buildSystem()
     const control = buildSystem()
-    findBody(bodies, 'mars')!.mass *= 0.5
+    findBody(bodies, 'saturn')!.mass *= 0.5
     run(bodies, 150); run(control, 150)
-    const drained = scoreOf(findBody(bodies, 'phobos')!, bodies, envelope)
-    const untouched = scoreOf(findBody(control, 'phobos')!, control, envelope)
+    const drained = scoreOf(findBody(bodies, 'titan')!, bodies, envelope)
+    const untouched = scoreOf(findBody(control, 'titan')!, control, envelope)
     expect(drained).toBeLessThan(untouched - 5)
     expect(untouched).toBe(100)
   })
@@ -93,22 +93,22 @@ describe('stability (envelope-based)', () => {
     const bodies = buildSystem()
     const titan = findBody(bodies, 'titan')!
     const saturn = findBody(bodies, 'saturn')!
-    const phobos = findBody(bodies, 'phobos')!
-    // Construct the tracker WITHOUT phobos — simulates a body that isn't
+    const oberon = findBody(bodies, 'oberon')!
+    // Construct the tracker WITHOUT oberon — simulates a body that isn't
     // present/tracked yet (the mid-run-addition scenario Task 7 hits when
     // spawning fabs: the tracker predates the new body).
-    const initial = bodies.filter(b => b.name !== 'phobos')
+    const initial = bodies.filter(b => b.name !== 'oberon')
     const tracker = new StabilityTracker(initial, envelope)
     extract(titan, 'strip', 0.0006, saturn.vel)
     run(bodies, 40, tracker)
     expect(tracker.heldBand('titan')).toBe('critical')
     const titanHeldBefore = tracker.heldScore('titan')
-    expect(() => tracker.heldScore('phobos')).toThrow()
+    expect(() => tracker.heldScore('oberon')).toThrow()
 
-    tracker.track(phobos)
+    tracker.track(oberon)
 
-    expect(tracker.heldBand('phobos')).toBe('green')
-    expect(tracker.heldScore('phobos')).toBe(100)
+    expect(tracker.heldBand('oberon')).toBe('green')
+    expect(tracker.heldScore('oberon')).toBe(100)
     // titan's already-accumulated held/band state must be untouched.
     expect(tracker.heldBand('titan')).toBe('critical')
     expect(tracker.heldScore('titan')).toBe(titanHeldBefore)

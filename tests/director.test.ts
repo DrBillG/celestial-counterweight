@@ -3,7 +3,6 @@ import { Director, type GameEvent } from '../src/game/director'
 import { findBody } from '../src/sim/data'
 import { extract } from '../src/sim/mining'
 import { computeBaselineEnvelope } from '../src/sim/stability'
-import { norm, sub } from '../src/sim/vec'
 import {
   RATE, EXTRACTION_FLOOR, SPHERE_MASS_REQUIRED, DECISION_WINDOW,
   SLINGSHOT_BONUS, SIM_RATE,
@@ -58,28 +57,21 @@ describe('Director: run state machine (Task 9)', () => {
     expect(d.state).toBe('mining')
   })
 
-  it('bodyRisk: phobos + mars fragile (fairness traps), jupiter trio trophies, others standard', () => {
+  it('bodyRisk: every minable moon is a clean, standard target now (no traps)', () => {
     const d = new Director(envelope)
-    expect(d.bodyRisk('phobos')).toBe('fragile')
-    expect(d.bodyRisk('mars')).toBe('fragile') // poisoned pool — telegraphed
-    for (const trophy of ['io', 'europa', 'ganymede']) expect(d.bodyRisk(trophy)).toBe('trophy')
-    for (const std of ['titan', 'moon']) expect(d.bodyRisk(std)).toBe('standard')
+    for (const std of ['moon', 'europa', 'titan', 'oberon', 'triton'])
+      expect(d.bodyRisk(std)).toBe('standard')
   })
 
-  it('selectTarget emits riskWarning for fragile bodies (mars/phobos) but not for safe ones (titan)', () => {
+  it('selectTarget emits NO riskWarning for a normal moon (roster has no traps)', () => {
     const d = new Director(envelope)
     d.selectTarget('titan')
     expect(drainAll(d).some(e => e.type === 'riskWarning')).toBe(false)
 
-    d.selectTarget('mars')
-    const marsW = drainAll(d).filter(e => e.type === 'riskWarning')
-    expect(marsW).toEqual([{ type: 'riskWarning', body: 'mars', risk: 'fragile' }])
-
-    // phobos too — from mining state, target switching still warns
+    // Switching targets from mining state still fires no risk warning.
     flyTo(d, 'titan')
-    d.selectTarget('phobos')
-    const phW = drainAll(d).filter(e => e.type === 'riskWarning')
-    expect(phW).toEqual([{ type: 'riskWarning', body: 'phobos', risk: 'fragile' }])
+    d.selectTarget('europa')
+    expect(drainAll(d).some(e => e.type === 'riskWarning')).toBe(false)
   })
 
   it('clearTarget deselects in orrery, but is a no-op once committed to a transit/mining', () => {
@@ -303,16 +295,12 @@ describe('Director: run state machine (Task 9)', () => {
 
   it('fabLost is a setback, NOT a loss (amendment 10)', () => {
     const d = new Director(envelope)
-    // Measured doomed fab (Task 8 proximity proof): ganymede orbits OUTSIDE
-    // jupiter's Hill radius, so a helio-layer fab parked just beyond it is
-    // captured and swallowed by jupiter within ~300 tu — quietly.
-    const ganymede = findBody(d.sim.bodies, 'ganymede')!
+    // Doomed fab: placed exactly coincident with a planet, so it collides on
+    // the first substep — a quiet setback (fabLost), never a game-over. The
+    // planet survives (bodies are never removed) and the run stays playable.
+    // mass 0.02 / jupiter ≈ 0.013 ≤ FAB_MASS_RATIO_MAX.
     const jupiter = findBody(d.sim.bodies, 'jupiter')!
-    const radial = norm(sub(ganymede.pos, jupiter.pos))
-    const fab = d.sim.addFab(
-      { x: ganymede.pos.x + radial.x * 6, y: ganymede.pos.y + radial.y * 6 },
-      0.05,
-    )
+    const fab = d.sim.addFab({ x: jupiter.pos.x, y: jupiter.pos.y }, 0.02)
     expect(fab).not.toBeNull()
     let sawFabLost = false
     for (let t = 0; t < 320 && !sawFabLost; t += 10) {

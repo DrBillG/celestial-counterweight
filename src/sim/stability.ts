@@ -101,7 +101,11 @@ export function harmony(bodies: Body[], envelope: Record<string, number>): numbe
     wsum += b.m0 * scoreOf(b, bodies, envelope)
     wtotal += b.m0
   }
-  return wtotal === 0 ? 100 : wsum / wtotal
+  // Each scoreOf is clamped to [0,100], so the weighted mean is definitionally
+  // in [0,100]; clamp the result to strip floating-point overshoot from the
+  // Σ(m0·score)/Σ(m0) division (a pristine all-100 system can otherwise read
+  // 100.00000000000001 for some m0 weightings).
+  return wtotal === 0 ? 100 : Math.max(0, Math.min(100, wsum / wtotal))
 }
 
 // Tracks a "held" score per body across sim steps: instant worsening,

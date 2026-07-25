@@ -16,11 +16,12 @@ describe('mining', () => {
 
   it('caps a single extraction at half the body mass', () => {
     const bodies = buildSystem()
-    const europa = findBody(bodies, 'europa')! // mass 0.0005 — dose bigger than body
+    const europa = findBody(bodies, 'europa')! // mass 0.018
     const jupiter = findBody(bodies, 'jupiter')!
-    const result = extract(europa, 'strip', 0.002, jupiter.vel)
-    expect(result.cargo).toBeCloseTo(0.00025, 10)
-    expect(europa.mass).toBeCloseTo(0.00025, 10)
+    const m0 = europa.mass
+    const result = extract(europa, 'strip', m0 * 2, jupiter.vel) // dose bigger than body
+    expect(result.cargo).toBeCloseTo(m0 / 2, 10)
+    expect(europa.mass).toBeCloseTo(m0 / 2, 10)
   })
 
   it('conserves momentum: body impulse equals ejecta momentum, opposite sign', () => {
